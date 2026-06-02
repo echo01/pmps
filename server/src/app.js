@@ -9,6 +9,7 @@ const { errorResponse } = require('./shared/response');
 const { debugRoutes } = require('./modules/debug/debug.routes');
 const { rolesRoutes } = require('./modules/roles/roles.routes');
 const { authRoutes } = require('./modules/auth/auth.routes');
+const { usersRoutes } = require('./modules/users/users.routes');
 
 const {
   badRequest,
@@ -29,6 +30,7 @@ app.use(express.json());
 
 app.use('/api', healthRoutes);
 app.use('/api', authRoutes);
+app.use('/api', usersRoutes);
 app.use('/api', rolesRoutes);
 
 if (process.env.NODE_ENV === 'development') {
