@@ -1,0 +1,34 @@
+{
+  "name": "pmps",
+  "version": "1.0.0",
+  "description": "backend application for PMPS (production management and planning system)",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "migrate:up": "dotenv -e .env -- node-pg-migrate up",
+    "migrate:down": "dotenv -e .env -- node-pg-migrate down",
+    "migrate:create": "node-pg-migrate create",
+    "migrate:test:up": "dotenv -e .env -- node -e \"process.env.DATABASE_URL=process.env.DATABASE_URL_TEST; require('child_process').execSync('npx node-pg-migrate up', {stdio:'inherit'})\"",
+    "migrate:test:down": "dotenv -e .env -- node -e \"process.env.DATABASE_URL=process.env.DATABASE_URL_TEST; require('child_process').execSync('npx node-pg-migrate down', {stdio:'inherit'})\""
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.21.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0",
+    "dotenv-cli": "^11.0.0",
+    "node-pg-migrate": "^8.0.4",
+    "nodemon": "^3.1.14"
+  }
+}

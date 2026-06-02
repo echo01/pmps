@@ -1,0 +1,10 @@
+postgres=# CREATE ROLE team_admin
+postgres-# WITH LOGIN CREATEDB CREATEROLE PASSWORD 'admin7005';
+
+1. ทำการ initial project nod.js
+..\PMPS\server\npm init
+
+install package
+..\server\npm install pg dotenv
+..\server\nnpm install -D node-pg-migrate
+

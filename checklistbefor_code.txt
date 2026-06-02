@@ -1,0 +1,40 @@
+1. เพิ่ม DB constraint ที่จำเป็น
+2. สร้าง migration script
+3. สร้าง seed admin / role / permission
+4. สร้าง health API
+5. สร้าง response format กลาง
+6. สร้าง error middleware
+7. สร้าง requestId middleware
+8. สร้าง withTransaction helper
+9. สร้าง repository pattern ตัวอย่าง 1 module
+10. สร้าง test database สำหรับ integration test
+
+
+===================================================================
+Step 4.17 — จุด Debug ถ้า Health API ไม่ผ่าน
+
+กรณี 1: DATABASE_URL is required
+แปลว่า .env ไม่ถูกโหลด หรือไม่มี DATABASE_URL
+ตรวจด้วย:
+PowerShell
+node -e "require('dotenv').config(); console.log(process.env.DATABASE_URL)"
+
+กรณี 2: password authentication failed
+แปลว่า username/password PostgreSQL ผิด
+ให้ตรวจ .env:
+DATABASE_URL=postgres://postgres:your_password@localhost:5432/production_db
+
+
+กรณี 3: database "production_db" does not exist
+แปลว่าชื่อ database ผิด หรือยังไม่ได้สร้าง DB
+ตรวจด้วย psql:
+psql -U postgres -h localhost -p 5432 -l
+
+กรณี 4: Port 3000 already in use
+เปลี่ยน .env:
+PORT=3001
+แล้วรันใหม่:
+npm run dev
+========================================================================================
+
+
