@@ -4,6 +4,9 @@ const {
   getRoles,
   getRole,
   postRole,
+  putRole,
+  getPermissionsByRole,
+  putPermissionsByRole,
 } = require('./roles.controller');
 
 const { authMiddleware } = require('../../middlewares/auth.middleware');
@@ -30,6 +33,27 @@ router.post(
   authMiddleware,
   requirePermission('UserRole'),
   postRole
+);
+
+router.put(
+  '/roles/:id',
+  authMiddleware,
+  requirePermission('UserRole'),
+  putRole
+);
+
+router.get(
+  '/roles/:id/permissions',
+  authMiddleware,
+  requirePermission('UserRole'),
+  getPermissionsByRole
+);
+
+router.put(
+  '/roles/:id/permissions',
+  authMiddleware,
+  requirePermission('UserRole'),
+  putPermissionsByRole
 );
 
 module.exports = {

@@ -2,11 +2,48 @@ const {
   listRoles,
   getRoleById,
   createNewRole,
+  updateExistingRole,
+  getRolePermissions,
+  replaceRolePermissions,
 } = require('./roles.service');
 
 const { successResponse, createdResponse } = require('../../shared/response');
 const { validationError } = require('../../shared/http-error');
-const { createRoleSchema } = require('./roles.schema');
+const {
+  createRoleSchema,
+  updateRoleSchema,
+  updateRolePermissionsSchema,
+} = require('./roles.schema');
+
+function parseId(idValue) {
+  const id = Number(idValue);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    throw validationError('Validation failed', [
+      {
+        field: 'id',
+        message: 'id must be a positive integer',
+      },
+    ]);
+  }
+
+  return id;
+}
+
+function parsePayload(schema, body) {
+  const parsed = schema.safeParse(body);
+
+  if (!parsed.success) {
+    const errors = parsed.error.issues.map((issue) => ({
+      field: issue.path.join('.') || 'body',
+      message: issue.message,
+    }));
+
+    throw validationError('Validation failed', errors);
+  }
+
+  return parsed.data;
+}
 
 async function getRoles(req, res, next) {
   try {
@@ -26,19 +63,8 @@ async function getRoles(req, res, next) {
 
 async function getRole(req, res, next) {
   try {
-    const id = Number(req.params.id);
-
-    if (!Number.isInteger(id)) {
-      throw validationError('Validation failed', [
-        {
-          field: 'id',
-          message: 'id must be integer',
-        },
-      ]);
-    }
-
     const role = await getRoleById({
-      id,
+      id: parseId(req.params.id),
       requestId: req.requestId,
     });
 
@@ -53,19 +79,8 @@ async function getRole(req, res, next) {
 
 async function postRole(req, res, next) {
   try {
-    const parsed = createRoleSchema.safeParse(req.body);
-
-    if (!parsed.success) {
-      const errors = parsed.error.issues.map((issue) => ({
-        field: issue.path.join('.'),
-        message: issue.message,
-      }));
-
-      throw validationError('Validation failed', errors);
-    }
-
     const role = await createNewRole({
-      payload: parsed.data,
+      payload: parsePayload(createRoleSchema, req.body),
       requestId: req.requestId,
     });
 
@@ -78,8 +93,62 @@ async function postRole(req, res, next) {
   }
 }
 
+async function putRole(req, res, next) {
+  try {
+    const role = await updateExistingRole({
+      id: parseId(req.params.id),
+      payload: parsePayload(updateRoleSchema, req.body),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Role updated successfully',
+      data: role,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getPermissionsByRole(req, res, next) {
+  try {
+    const permissions = await getRolePermissions({
+      id: parseId(req.params.id),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Role permissions retrieved successfully',
+      data: permissions,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function putPermissionsByRole(req, res, next) {
+  try {
+    const payload = parsePayload(updateRolePermissionsSchema, req.body);
+    const permissions = await replaceRolePermissions({
+      id: parseId(req.params.id),
+      permissionIds: payload.permission_ids,
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Role permissions updated successfully',
+      data: permissions,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 module.exports = {
   getRoles,
   getRole,
   postRole,
+  putRole,
+  getPermissionsByRole,
+  putPermissionsByRole,
 };

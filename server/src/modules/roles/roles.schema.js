@@ -13,6 +13,21 @@ const createRoleSchema = z.object({
     .max(150, 'role_name must not exceed 150 characters'),
 });
 
+const updateRoleSchema = z.object({
+  role_name: z
+    .string()
+    .min(2, 'role_name must be at least 2 characters')
+    .max(150, 'role_name must not exceed 150 characters'),
+});
+
+const updateRolePermissionsSchema = z.object({
+  permission_ids: z
+    .array(z.number().int().positive('permission id must be positive'))
+    .default([]),
+});
+
 module.exports = {
   createRoleSchema,
+  updateRoleSchema,
+  updateRolePermissionsSchema,
 };
