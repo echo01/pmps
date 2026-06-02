@@ -21,6 +21,7 @@ const state = {
   subCategoryId: null,
   modelId: null,
   lotId: null,
+  ecnId: null,
 };
 
 async function request(method, path, { token, body } = {}) {
@@ -117,6 +118,24 @@ describe('Sprint 4 Production Lot integration', () => {
     });
     assert.equal(model.status, 201);
     state.modelId = model.body.data.id;
+
+    const ecn = await pool.query(
+      `
+        INSERT INTO ecn_master (
+          ecn_no, ecn_title, revision, issue_date, effective_date, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
+      `,
+      [
+        `S4-ECN-${codeSuffix}`,
+        'Sprint 4 ECN',
+        'A',
+        '2026-06-01',
+        '2026-06-02',
+      ]
+    );
+    state.ecnId = ecn.rows[0].id;
   });
 
   after(async () => {
@@ -144,6 +163,14 @@ describe('Sprint 4 Production Lot integration', () => {
         )
       `,
       [`S4%${codeSuffix}%`]
+    );
+
+    await pool.query(
+      `
+        DELETE FROM ecn_master
+        WHERE ecn_no LIKE $1
+      `,
+      [`S4-ECN-${codeSuffix}%`]
     );
 
     await pool.query(
@@ -222,6 +249,29 @@ describe('Sprint 4 Production Lot integration', () => {
     assert.equal(response.body.data.lot.serial_count, 3);
     assert.equal(response.body.data.serials.length, 3);
     state.lotId = response.body.data.lot.id;
+  });
+
+  it('links ECN references to production lot and returns them in detail', async () => {
+    const linked = await request('POST', `/api/production-lots/${state.lotId}/ecn`, {
+      token: adminToken,
+      body: {
+        ecn_ids: [state.ecnId],
+      },
+    });
+
+    assert.equal(linked.status, 200);
+    assert.equal(linked.body.success, true);
+    assert.equal(linked.body.data.length, 1);
+    assert.equal(linked.body.data[0].ecn_id, state.ecnId);
+    assert.equal(linked.body.data[0].ecn_no, `S4-ECN-${codeSuffix}`);
+
+    const detail = await request('GET', `/api/production-lots/${state.lotId}`, {
+      token: adminToken,
+    });
+
+    assert.equal(detail.status, 200);
+    assert.ok(Array.isArray(detail.body.data.ecn_refs));
+    assert.ok(detail.body.data.ecn_refs.some((row) => row.ecn_id === state.ecnId));
   });
 
   it('lists, retrieves, updates, and reads production lot serials', async () => {

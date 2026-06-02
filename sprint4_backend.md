@@ -112,6 +112,7 @@ Added `server/src/tests/production-lots.test.js` covering:
 - update lot status and remark
 - duplicate lot conflict
 - duplicate serial conflict and rollback
+- ECN reference assignment via `POST /api/production-lots/:id/ecn`
 - current lots
 - no token returns 401
 - user without `ProductionLot` permission returns 403

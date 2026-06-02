@@ -15,6 +15,7 @@ const { equipmentRoutes } = require('./modules/equipment/equipment.routes');
 const { modelRequiredEquipmentRoutes } = require('./modules/model-required-equipment/model-required-equipment.routes');
 const { testTemplatesRoutes } = require('./modules/test-templates/test-templates.routes');
 const { productionLotsRoutes } = require('./modules/production-lots/production-lots.routes');
+const { qcInspectionsRoutes } = require('./modules/qc-inspections/qc-inspections.routes');
 const { pool } = require('./db/pool');
 
 
@@ -45,6 +46,7 @@ app.use('/api', equipmentRoutes);
 app.use('/api', modelRequiredEquipmentRoutes);
 app.use('/api', testTemplatesRoutes);
 app.use('/api', productionLotsRoutes);
+app.use('/api', qcInspectionsRoutes);
 
 
 if (process.env.NODE_ENV === 'development') {
