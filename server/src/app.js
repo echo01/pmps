@@ -10,6 +10,13 @@ const { debugRoutes } = require('./modules/debug/debug.routes');
 const { rolesRoutes } = require('./modules/roles/roles.routes');
 const { authRoutes } = require('./modules/auth/auth.routes');
 const { usersRoutes } = require('./modules/users/users.routes');
+const { productsRoutes } = require('./modules/products/products.routes');
+const { equipmentRoutes } = require('./modules/equipment/equipment.routes');
+const { modelRequiredEquipmentRoutes } = require('./modules/model-required-equipment/model-required-equipment.routes');
+const { testTemplatesRoutes } = require('./modules/test-templates/test-templates.routes');
+const { pool } = require('./db/pool');
+
+
 
 const {
   badRequest,
@@ -32,6 +39,11 @@ app.use('/api', healthRoutes);
 app.use('/api', authRoutes);
 app.use('/api', usersRoutes);
 app.use('/api', rolesRoutes);
+app.use('/api', productsRoutes);
+app.use('/api', equipmentRoutes);
+app.use('/api', modelRequiredEquipmentRoutes);
+app.use('/api', testTemplatesRoutes);
+
 
 if (process.env.NODE_ENV === 'development') {
   app.post('/api/debug/json', (req, res) => {
