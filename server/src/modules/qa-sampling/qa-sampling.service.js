@@ -375,11 +375,12 @@ async function getQaSampling({ id, requestId }) {
     throw notFound('QA sampling not found');
   }
 
-  const [sampleUnits, details, equipment, approvalLogs] = await Promise.all([
+  const [sampleUnits, details, equipment, approvalLogs, editHistory] = await Promise.all([
     repository.findQaSampleUnits(id),
     repository.findQaSampleDetails(id),
     repository.findQaSamplingEquipment(id),
     repository.findApprovalLogs(id),
+    repository.findResultEditAuditLogs(id),
   ]);
   const detailsByUnitId = details.reduce((map, detail) => {
     if (!map.has(detail.qa_sample_unit_id)) {
@@ -398,6 +399,7 @@ async function getQaSampling({ id, requestId }) {
     })),
     equipment,
     approval_logs: approvalLogs,
+    edit_history: editHistory,
   };
 }
 
@@ -618,6 +620,221 @@ async function rejectQaSampling({ id, userId, remark, requestId }) {
   });
 }
 
+function groupDetailsByUnit(details) {
+  return details.reduce((map, detail) => {
+    if (!map.has(detail.qa_sample_unit_id)) {
+      map.set(detail.qa_sample_unit_id, []);
+    }
+
+    map.get(detail.qa_sample_unit_id).push(detail);
+    return map;
+  }, new Map());
+}
+
+async function requestQaSamplingEdit({ id, userId, reason, requestId }) {
+  console.info('[QA][EDIT_REQUEST][START]', { requestId, id, userId });
+
+  const sampling = await repository.findQaSamplingById(id);
+
+  if (!sampling) {
+    throw notFound('QA sampling not found');
+  }
+
+  if (sampling.status !== 'APPROVED') {
+    throw conflict('Only APPROVED QA sampling can request result edit');
+  }
+
+  await withTransaction(
+    async (client) => {
+      await repository.updateQaSamplingAfterApprovedEdit(
+        id,
+        {
+          status: 'EDIT_REQUESTED',
+          overall_result: sampling.overall_result,
+          accept_qty: sampling.accept_qty,
+          reject_qty: sampling.reject_qty,
+        },
+        client
+      );
+
+      await repository.insertResultEditAuditLog(
+        {
+          source_id: id,
+          old_overall_result: sampling.overall_result,
+          new_overall_result: sampling.overall_result,
+          edit_reason: reason,
+          edit_by: userId,
+          approval_status: 'REQUESTED',
+        },
+        client
+      );
+    },
+    {
+      requestId,
+      name: 'qa-edit-request',
+    }
+  );
+
+  return getQaSampling({ id, requestId });
+}
+
+async function applyQaSamplingEdit({ id, payload, userId, requestId }) {
+  console.info('[QA][EDIT_APPLY][START]', { requestId, id, userId });
+
+  const sampling = await repository.findQaSamplingById(id);
+
+  if (!sampling) {
+    throw notFound('QA sampling not found');
+  }
+
+  if (sampling.status !== 'EDIT_REQUESTED') {
+    throw conflict('QA sampling must be EDIT_REQUESTED before applying edit');
+  }
+
+  const detailIds = payload.items.map((item) => item.detail_id);
+  const existingDetails = await repository.findQaSampleDetailsForEdit(id, detailIds);
+
+  if (existingDetails.length !== detailIds.length) {
+    throw validationError('Validation failed', [
+      {
+        field: 'items',
+        message: 'Some detail_id values were not found in this QA sampling',
+      },
+    ]);
+  }
+
+  const detailById = new Map(existingDetails.map((detail) => [detail.id, detail]));
+  let newOverallResult = sampling.overall_result;
+
+  await withTransaction(
+    async (client) => {
+      for (const item of payload.items) {
+        const oldDetail = detailById.get(item.detail_id);
+        const nextMeasuredValue = Object.prototype.hasOwnProperty.call(item, 'measured_value')
+          ? item.measured_value
+          : oldDetail.measured_value;
+        const nextMeasuredText = Object.prototype.hasOwnProperty.call(item, 'measured_text')
+          ? item.measured_text
+          : oldDetail.measured_text;
+        const nextResult = calculateItemResult(oldDetail, {
+          measured_value: nextMeasuredValue,
+          measured_text: nextMeasuredText,
+        });
+
+        await repository.updateQaSampleDetailResult(
+          oldDetail.id,
+          {
+            measured_value: nextMeasuredValue,
+            measured_text: nextMeasuredText,
+            result: nextResult,
+            remark: Object.prototype.hasOwnProperty.call(item, 'remark') ? item.remark : oldDetail.remark,
+          },
+          client
+        );
+      }
+
+      const recalculatedDetails = await repository.findAllQaSampleDetailsForOverall(id, client);
+      const detailsByUnit = groupDetailsByUnit(recalculatedDetails);
+      const sampleUnits = [];
+
+      for (const [unitId, unitDetails] of detailsByUnit.entries()) {
+        const unitResult = calculateUnitResult(unitDetails);
+        sampleUnits.push({
+          id: unitId,
+          unit_result: unitResult,
+        });
+        await repository.updateQaSampleUnitResult(unitId, unitResult, client);
+      }
+
+      newOverallResult = calculateSamplingOverallResult(sampleUnits);
+      const acceptQty = sampleUnits.filter((unit) => unit.unit_result === 'PASS').length;
+      const rejectQty = sampleUnits.filter((unit) => unit.unit_result === 'FAIL').length;
+
+      await repository.updateQaSamplingAfterApprovedEdit(
+        id,
+        {
+          status: 'SUBMITTED',
+          overall_result: newOverallResult,
+          accept_qty: acceptQty,
+          reject_qty: rejectQty,
+        },
+        client
+      );
+
+      for (const item of payload.items) {
+        const oldDetail = detailById.get(item.detail_id);
+        const nextMeasuredValue = Object.prototype.hasOwnProperty.call(item, 'measured_value')
+          ? item.measured_value
+          : oldDetail.measured_value;
+        const nextMeasuredText = Object.prototype.hasOwnProperty.call(item, 'measured_text')
+          ? item.measured_text
+          : oldDetail.measured_text;
+        const nextResult = calculateItemResult(oldDetail, {
+          measured_value: nextMeasuredValue,
+          measured_text: nextMeasuredText,
+        });
+
+        await repository.insertResultEditAuditLog(
+          {
+            source_id: id,
+            detail_id: oldDetail.id,
+            template_item_id: oldDetail.template_item_id,
+            old_measured_value: oldDetail.measured_value,
+            new_measured_value: nextMeasuredValue,
+            old_measured_text: oldDetail.measured_text,
+            new_measured_text: nextMeasuredText,
+            old_result: oldDetail.result,
+            new_result: nextResult,
+            old_overall_result: sampling.overall_result,
+            new_overall_result: newOverallResult,
+            edit_reason: payload.reason,
+            edit_by: userId,
+            approval_status: 'APPLIED',
+          },
+          client
+        );
+      }
+
+      await repository.insertApprovalLog(
+        {
+          source_id: id,
+          action: 'APPLY_EDIT',
+          old_status: 'EDIT_REQUESTED',
+          new_status: 'SUBMITTED',
+          action_by: userId,
+          remark: payload.reason,
+        },
+        client
+      );
+    },
+    {
+      requestId,
+      name: 'qa-apply-edit',
+    }
+  );
+
+  console.info('[QA][EDIT_APPLY][SUCCESS]', {
+    requestId,
+    id,
+    oldOverallResult: sampling.overall_result,
+    newOverallResult,
+  });
+
+  return getQaSampling({ id, requestId });
+}
+
+async function getQaSamplingEditHistory({ id, requestId }) {
+  console.info('[QA][EDIT_HISTORY]', { requestId, id });
+
+  const sampling = await repository.findQaSamplingById(id);
+
+  if (!sampling) {
+    throw notFound('QA sampling not found');
+  }
+
+  return repository.findResultEditAuditLogs(id);
+}
+
 module.exports = {
   listQaLots,
   listQaLotUnits,
@@ -631,4 +848,7 @@ module.exports = {
   reviewQaSampling,
   approveQaSampling,
   rejectQaSampling,
+  requestQaSamplingEdit,
+  applyQaSamplingEdit,
+  getQaSamplingEditHistory,
 };

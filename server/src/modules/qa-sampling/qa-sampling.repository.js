@@ -667,6 +667,214 @@ async function insertApprovalLog(payload, client) {
   return result.rows[0];
 }
 
+async function findQaSampleDetailsForEdit(qaSamplingId, detailIds) {
+  if (!detailIds.length) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      SELECT
+        d.id,
+        d.qa_sample_unit_id,
+        su.qa_sampling_id,
+        su.product_unit_id,
+        su.serial_number,
+        d.template_item_id,
+        d.measured_value,
+        d.measured_text,
+        d.result,
+        d.remark,
+        i.item_code,
+        i.test_point AS item_name,
+        i.check_type,
+        i.spec_min,
+        i.spec_max,
+        i.mandatory
+      FROM qa_sample_detail d
+      JOIN qa_sample_unit su ON su.id = d.qa_sample_unit_id
+      JOIN test_template_item i ON i.id = d.template_item_id
+      WHERE su.qa_sampling_id = $1
+        AND d.id = ANY($2::int[])
+      ORDER BY su.sample_no ASC, d.id ASC
+    `,
+    [qaSamplingId, detailIds]
+  );
+
+  return result.rows;
+}
+
+async function findAllQaSampleDetailsForOverall(qaSamplingId, client) {
+  const result = await executor(client).query(
+    `
+      SELECT
+        d.id,
+        d.qa_sample_unit_id,
+        d.template_item_id,
+        d.measured_value,
+        d.measured_text,
+        d.result,
+        i.mandatory
+      FROM qa_sample_detail d
+      JOIN qa_sample_unit su ON su.id = d.qa_sample_unit_id
+      JOIN test_template_item i ON i.id = d.template_item_id
+      WHERE su.qa_sampling_id = $1
+      ORDER BY su.sample_no ASC, d.id ASC
+    `,
+    [qaSamplingId]
+  );
+
+  return result.rows;
+}
+
+async function updateQaSampleDetailResult(detailId, payload, client) {
+  const result = await executor(client).query(
+    `
+      UPDATE qa_sample_detail
+      SET
+        measured_value = $2,
+        measured_text = $3,
+        result = $4,
+        remark = $5,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *
+    `,
+    [
+      detailId,
+      payload.measured_value,
+      payload.measured_text,
+      payload.result,
+      payload.remark || null,
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function updateQaSampleUnitResult(unitId, unitResult, client) {
+  const result = await executor(client).query(
+    `
+      UPDATE qa_sample_unit
+      SET
+        unit_result = $2,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *
+    `,
+    [unitId, unitResult]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function updateQaSamplingAfterApprovedEdit(id, payload, client) {
+  const result = await executor(client).query(
+    `
+      UPDATE qa_sampling_header
+      SET
+        status = $2,
+        overall_result = $3,
+        accept_qty = $4,
+        reject_qty = $5,
+        qa_reviewer_user_id = NULL,
+        qa_approver_user_id = NULL,
+        reviewed_at = NULL,
+        approved_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *
+    `,
+    [id, payload.status, payload.overall_result, payload.accept_qty, payload.reject_qty]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function insertResultEditAuditLog(payload, client) {
+  const result = await executor(client).query(
+    `
+      INSERT INTO result_edit_audit_log (
+        source_type,
+        source_id,
+        detail_id,
+        template_item_id,
+        old_measured_value,
+        new_measured_value,
+        old_measured_text,
+        new_measured_text,
+        old_result,
+        new_result,
+        old_overall_result,
+        new_overall_result,
+        edit_reason,
+        edit_by,
+        edit_at,
+        approval_status
+      )
+      VALUES (
+        'QA', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP, $14
+      )
+      RETURNING *
+    `,
+    [
+      payload.source_id,
+      payload.detail_id || null,
+      payload.template_item_id || null,
+      payload.old_measured_value ?? null,
+      payload.new_measured_value ?? null,
+      payload.old_measured_text || null,
+      payload.new_measured_text || null,
+      payload.old_result || null,
+      payload.new_result || null,
+      payload.old_overall_result || null,
+      payload.new_overall_result || null,
+      payload.edit_reason,
+      payload.edit_by,
+      payload.approval_status,
+    ]
+  );
+
+  return result.rows[0];
+}
+
+async function findResultEditAuditLogs(qaSamplingId) {
+  const result = await pool.query(
+    `
+      SELECT
+        l.id,
+        l.source_type,
+        l.source_id,
+        l.detail_id,
+        l.template_item_id,
+        i.item_code,
+        i.test_point AS item_name,
+        l.old_measured_value,
+        l.new_measured_value,
+        l.old_measured_text,
+        l.new_measured_text,
+        l.old_result,
+        l.new_result,
+        l.old_overall_result,
+        l.new_overall_result,
+        l.edit_reason,
+        l.edit_by,
+        u.username AS edit_by_username,
+        l.edit_at,
+        l.approval_status
+      FROM result_edit_audit_log l
+      LEFT JOIN test_template_item i ON i.id = l.template_item_id
+      LEFT JOIN app_user u ON u.id = l.edit_by
+      WHERE l.source_type = 'QA'
+        AND l.source_id = $1
+      ORDER BY l.edit_at ASC, l.id ASC
+    `,
+    [qaSamplingId]
+  );
+
+  return result.rows;
+}
+
 module.exports = {
   findQaLots,
   findLotById,
@@ -693,4 +901,11 @@ module.exports = {
   findModelRequiredEquipment,
   updateQaSamplingStatus,
   insertApprovalLog,
+  findQaSampleDetailsForEdit,
+  findAllQaSampleDetailsForOverall,
+  updateQaSampleDetailResult,
+  updateQaSampleUnitResult,
+  updateQaSamplingAfterApprovedEdit,
+  insertResultEditAuditLog,
+  findResultEditAuditLogs,
 };

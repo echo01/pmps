@@ -5,6 +5,8 @@ const {
   updateQcInspectionSchema,
   workflowRemarkSchema,
   rejectWorkflowSchema,
+  editRequestSchema,
+  applyApprovedResultEditSchema,
 } = require('./qc-inspections.schema');
 const {
   listQcLots,
@@ -19,6 +21,9 @@ const {
   reviewQcInspection,
   approveQcInspection,
   rejectQcInspection,
+  requestQcInspectionEdit,
+  applyQcInspectionEdit,
+  getQcInspectionEditHistory: getQcInspectionEditHistoryService,
 } = require('./qc-inspections.service');
 
 async function getQcLots(req, res, next) {
@@ -223,6 +228,58 @@ async function postRejectQcInspection(req, res, next) {
   }
 }
 
+async function postQcInspectionEditRequest(req, res, next) {
+  try {
+    const inspection = await requestQcInspectionEdit({
+      id: parsePositiveInt(req.params.id, 'id'),
+      userId: req.user.id,
+      reason: parsePayload(editRequestSchema, req.body).reason,
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QC inspection edit requested successfully',
+      data: inspection,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function postApplyQcInspectionEdit(req, res, next) {
+  try {
+    const inspection = await applyQcInspectionEdit({
+      id: parsePositiveInt(req.params.id, 'id'),
+      payload: parsePayload(applyApprovedResultEditSchema, req.body),
+      userId: req.user.id,
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QC inspection edit applied successfully',
+      data: inspection,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getQcInspectionEditHistory(req, res, next) {
+  try {
+    const history = await getQcInspectionEditHistoryService({
+      id: parsePositiveInt(req.params.id, 'id'),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QC inspection edit history retrieved successfully',
+      data: history,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 module.exports = {
   getQcLots,
   getQcLotUnits,
@@ -236,4 +293,7 @@ module.exports = {
   postReviewQcInspection,
   postApproveQcInspection,
   postRejectQcInspection,
+  postQcInspectionEditRequest,
+  postApplyQcInspectionEdit,
+  getQcInspectionEditHistory,
 };

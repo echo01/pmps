@@ -415,6 +415,18 @@ function tableForRows(tab, rows) {
   `;
 }
 
+function reportActionsMarkup() {
+  if (state.activeTab === 'qc') {
+    return '<button id="export-qc-button">Export QC CSV</button>';
+  }
+
+  if (state.activeTab === 'qa') {
+    return '<button id="export-qa-button">Export QA CSV</button>';
+  }
+
+  return '';
+}
+
 async function fetchReports() {
   if (state.activeTab === 'lots') {
     return reportsApi.searchLots(state.filters);
@@ -471,8 +483,7 @@ async function renderReports() {
             <h1>Reports</h1>
           </div>
           <div class="actions">
-            <button id="export-qc-button">Export QC CSV</button>
-            <button id="export-qa-button">Export QA CSV</button>
+            ${reportActionsMarkup()}
           </div>
         </div>
         <div class="tabs">
@@ -540,13 +551,13 @@ function bindReportActions(pagination) {
     renderReports();
   });
 
-  document.querySelector('#export-qc-button').addEventListener('click', async () => {
+  document.querySelector('#export-qc-button')?.addEventListener('click', async () => {
     const response = await reportsApi.exportQcInspections(state.filters);
     console.log('[REPORTS][EXPORT][QC]', response.data);
     exportCsv('qc-inspections.csv', response.data || []);
   });
 
-  document.querySelector('#export-qa-button').addEventListener('click', async () => {
+  document.querySelector('#export-qa-button')?.addEventListener('click', async () => {
     const response = await reportsApi.exportQaSamplings(state.filters);
     console.log('[REPORTS][EXPORT][QA]', response.data);
     exportCsv('qa-samplings.csv', response.data || []);

@@ -1,167 +1,219 @@
-# PMPS Backend — Production Inspection & QA Sampling
+# PMPS - Production Management and Planning System
 
-Backend application for PMPS production line quality management. This service provides API foundations for Production Lot, QC Inspection, QA Sampling, Equipment Traceability, Approval Workflow, User/Role Permission Control, Reports, and External API Integration.
+PMPS is a production quality management system for Production Lot control, QC Inspection, QA Sampling, equipment traceability, approval workflow, RBAC permission control, reports, dashboard, and frontend search screens.
 
-This repository currently contains the Sprint 1 backend foundation: database hardening, migrations, seed data, API response standard, error handling, request tracing, transaction helper, repository pattern, test database setup, authentication, JWT authorization, and RBAC middleware.
-
----
-
-## 1. Tech Stack
+Current project status: Sprint 1-9 completed.
 
 ```text
-Runtime      : Node.js
-Framework    : Express.js
-Database     : PostgreSQL
-DB Driver    : pg
-Migration    : node-pg-migrate
-Validation   : zod
-Auth         : JWT
-Password Hash: bcrypt
-Testing      : vitest + supertest
-Environment  : dotenv / dotenv-cli
+Backend foundation                 PASS
+Auth / User / Role / RBAC          PASS
+Product / Equipment master data    PASS
+Production Lot / Serial / ECN      PASS
+QC Inspection workflow             PASS
+QA Sampling workflow               PASS
+Report / Search / Dashboard API    PASS
+Frontend Dashboard/Search screens  PASS
+Edit Result / Audit Trail          PASS
 ```
 
 ---
 
-## 2. Current Sprint 1 Features
-
-### Database Foundation
-
-- Added required DB constraints and foreign keys.
-- Added unique constraints for production lots, QC inspection rounds, QA sampling rounds, and QA sample units.
-- Added permission tables:
-  - `app_permission`
-  - `app_role_permission`
-- Added External API client table:
-  - `external_api_client`
-- Added `updated_at` columns to key master and transaction tables.
-- Added status/result check constraints.
-- Fixed orphan data in `qa_sample_unit.product_unit_id` before adding FK.
-
-### Migration and Seed
-
-Created migration scripts:
+## Tech Stack
 
 ```text
-migrations/
-  1780039894529_db-hardening-before-backend.js
-  1780040826415_seed-default-permissions.js
-  1780042092598_seed-admin-user.js
+Backend runtime   : Node.js
+Backend framework : Express.js
+Database          : PostgreSQL
+DB driver         : pg
+Migration         : node-pg-migrate
+Validation        : zod
+Auth              : JWT
+Password hash     : bcrypt
+Backend testing   : node:test
+Frontend          : Static HTML/CSS/Vanilla JS SPA
+Frontend routing  : Hash routing
+Environment       : dotenv / dotenv-cli
 ```
 
-Seed data includes:
+---
 
-- `ADMIN` role
-- Default permissions
-- Role-permission mapping
-- Default admin user
-- Admin role assignment
-
-Default development login:
+## Repository Structure
 
 ```text
-username: admin
-password: Admin@123
+PMPS/
+  server/
+    src/
+      app.js
+      server.js
+      config/
+      db/
+      middlewares/
+      shared/
+      modules/
+        auth/
+        users/
+        roles/
+        products/
+        equipment/
+        model-required-equipment/
+        test-templates/
+        production-lots/
+        qc-inspections/
+        qa-sampling/
+        reports/
+      tests/
+    migrations/
+    package.json
+
+  frontend/
+    index.html
+    src/
+      app.js
+      styles.css
+      httpClient.js
+      authApi.js
+      reportsApi.js
+      exportCsv.js
+      formatDate.js
+
+  sprint1_backend.md
+  sprint2_backend.md
+  sprint3_backend.md
+  sprint4_backend.md
+  sprint5_backend.md
+  sprint6_backend.md
+  sprint7_backend.md
+  sprint8_backend.md
+  sprint9_backend.md
 ```
 
-> Change the default password before production use.
+---
+
+## Current Features
 
 ### Backend Foundation
 
-- Health API
-- Central response format
+- Standard API response format
 - Central error middleware
 - Request ID middleware
 - Request start/end logging
 - Log sanitization for sensitive values
-- PostgreSQL transaction helper
-- Repository pattern example with Roles module
+- PostgreSQL connection pool
+- Transaction helper
+- Repository/service/controller/route module pattern
 - Test database support
-- Integration test setup
+- DB hardening migrations
 
-### Authentication and Authorization
+### Auth / RBAC
 
-- Login API using username/password
-- bcrypt password verification
-- JWT access token generation
-- Login log write to `user_login_log`
+- `POST /api/auth/login`
 - `GET /api/auth/me`
 - JWT auth middleware
 - RBAC permission middleware
-- Protected Roles API with `UserRole` permission
+- User management APIs
+- Role management APIs
+- Role-permission assignment
+- User-role assignment
+
+### Master Data
+
+- Product Category
+- Product Sub Category
+- Product Model
+- Equipment Type
+- Equipment Master
+- Calibration status support
+- Model Required Equipment
+- Test Templates
+- Template Sections
+- Template Items
+
+### Production Lot
+
+- Production lot create/list/detail/update
+- Serial generation preview
+- Serial generation during lot creation
+- Lot serial list
+- Current lots
+- Lot status update
+- ECN reference assignment
+- Duplicate lot protection
+- Duplicate serial rollback protection
+
+### QC Inspection
+
+- QC lot/unit/template lookup
+- QC inspection create/detail/update
+- QC detail calculation
+- Equipment validation
+- Submit / Review / Approve / Reject workflow
+- Approval logs
+- Integration tests for workflow and permission behavior
+
+### QA Sampling
+
+- QA lot/unit/template lookup
+- QA sampling create/detail/update
+- Sample unit result calculation
+- Overall sampling result calculation
+- Equipment validation
+- Submit / Review / Approve / Reject workflow
+- Approval logs
+- Integration tests for workflow and permission behavior
+
+### Reports / Dashboard API
+
+- Dashboard summary
+- QC summary
+- QA summary
+- Lot status summary
+- Production lot report search
+- Serial report search
+- QC inspection report search
+- QA sampling report search
+- Lot detail report
+- Serial detail report
+- QC inspection detail report
+- QA sampling detail report
+- QC export-ready JSON
+- QA export-ready JSON
+
+### Edit Result / Audit Trail
+
+- QC edit request after approval
+- QC apply edit with recalculation
+- QC edit history
+- QA edit request after approval
+- QA apply edit with recalculation
+- QA edit history
+- Audit log with old/new values and reason
+- Report detail includes edit history
+- Edited results must be reviewed and approved again
+
+### Frontend
+
+- Static SPA in `frontend/`
+- Login bar with token storage
+- Dashboard page
+- Reports page with tabs and filters
+- Pagination
+- Detail pages
+- QC CSV export
+- QA CSV export
+- Loading / empty / error states
+- 401 and 403 display handling
 
 ---
 
-## 3. Project Structure
+## Environment Variables
 
-```text
-src/
-  app.js
-  server.js
-
-  config/
-    env.js
-
-  db/
-    pool.js
-    transaction.js
-
-  middlewares/
-    request-id.middleware.js
-    error.middleware.js
-    auth.middleware.js
-    rbac.middleware.js
-
-  shared/
-    response.js
-    http-error.js
-    db-error.mapper.js
-    sanitize-log.js
-
-  modules/
-    health/
-      health.routes.js
-      health.controller.js
-      health.service.js
-
-    auth/
-      auth.routes.js
-      auth.controller.js
-      auth.service.js
-      auth.repository.js
-      auth.schema.js
-
-    roles/
-      roles.routes.js
-      roles.controller.js
-      roles.service.js
-      roles.repository.js
-      roles.schema.js
-
-    debug/
-      debug.routes.js
-      debug.controller.js
-      debug.service.js
-      debug.repository.js
-
-  tests/
-    test-env.js
-    health.test.js
-    roles.test.js
-```
-
----
-
-## 4. Environment Variables
-
-Create `.env` in the backend project root.
+Create `server/.env`.
 
 ```env
-NODE_ENV=development
-PORT=3000
-
 DATABASE_URL=postgres://postgres:<password>@localhost:5432/production_db
 DATABASE_URL_TEST=postgres://postgres:<password>@localhost:5432/production_db_test
+PORT=3000
+NODE_ENV=development
 
 JWT_SECRET=<generate_a_long_random_secret>
 JWT_EXPIRES_IN=1d
@@ -173,39 +225,52 @@ Generate a JWT secret:
 node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 ```
 
-Do not commit `.env` to Git.
+Default development login:
+
+```text
+username: admin
+password: Admin@123
+```
+
+Change the default password before production use.
 
 ---
 
-## 5. Installation
+## Install Backend
 
 ```powershell
+cd D:\DevApp\production\PMPS\server
 npm install
 ```
 
-Common dependencies used in Sprint 1:
-
-```powershell
-npm install express pg cors helmet dotenv bcrypt jsonwebtoken zod
-npm install -D nodemon node-pg-migrate dotenv-cli vitest supertest
-```
-
 ---
 
-## 6. Database Setup
+## Database Setup
 
-### Main Database
-
-The main database is:
+Main database:
 
 ```text
 production_db
 ```
 
-Run migrations:
+Test database:
+
+```text
+production_db_test
+```
+
+Run migrations on main DB:
 
 ```powershell
-npm run migrate:up
+cd D:\DevApp\production\PMPS\server
+npm.cmd run migrate:up
+```
+
+Run migrations on test DB:
+
+```powershell
+cd D:\DevApp\production\PMPS\server
+npm.cmd run migrate:test:up
 ```
 
 Check migration history:
@@ -216,173 +281,296 @@ FROM pgmigrations
 ORDER BY run_on;
 ```
 
-Expected migrations:
+---
 
-```text
-1780039894529_db-hardening-before-backend
-1780040826415_seed-default-permissions
-1780042092598_seed-admin-user
-```
+## Run Backend
 
-### Test Database
-
-Create test database:
-
-```sql
-CREATE DATABASE production_db_test
-WITH
-    OWNER = postgres
-    ENCODING = 'UTF8'
-    TEMPLATE = template0;
-```
-
-The test database must contain the baseline schema before running the hardening migrations. Import the original schema first, then run:
+Development:
 
 ```powershell
-npm run migrate:test:up
+cd D:\DevApp\production\PMPS\server
+npm.cmd run dev
+```
+
+Start:
+
+```powershell
+cd D:\DevApp\production\PMPS\server
+npm.cmd start
+```
+
+Backend URL:
+
+```text
+http://localhost:3000
+```
+
+Health check:
+
+```powershell
+curl.exe "http://localhost:3000/api/health"
 ```
 
 ---
 
-## 7. Available Scripts
+## Run Frontend
 
-Example `package.json` scripts:
+The current frontend is dependency-free static HTML/CSS/JS.
 
-```json
-{
-  "scripts": {
-    "dev": "nodemon src/server.js",
-    "start": "node src/server.js",
-    "migrate:up": "dotenv -e .env -- node-pg-migrate up",
-    "migrate:down": "dotenv -e .env -- node-pg-migrate down",
-    "migrate:create": "node-pg-migrate create",
-    "migrate:test:up": "dotenv -e .env -- node -e \"process.env.DATABASE_URL=process.env.DATABASE_URL_TEST; require('child_process').execSync('npx node-pg-migrate up', {stdio:'inherit'})\"",
-    "migrate:test:down": "dotenv -e .env -- node -e \"process.env.DATABASE_URL=process.env.DATABASE_URL_TEST; require('child_process').execSync('npx node-pg-migrate down', {stdio:'inherit'})\"",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  }
-}
+```powershell
+cd D:\DevApp\production\PMPS\frontend
+python -m http.server 5173
+```
+
+Open:
+
+```text
+http://localhost:5173/#/dashboard
+```
+
+Routes:
+
+```text
+/#/dashboard
+/#/reports
+/#/reports/lots/:lotId
+/#/reports/serials/:productUnitId
+/#/reports/qc-inspections/:id
+/#/reports/qa-samplings/:id
+```
+
+Frontend API base URL defaults to:
+
+```text
+http://localhost:3000/api
+```
+
+To override it in browser console:
+
+```js
+localStorage.setItem('pmps_api_base_url', 'http://localhost:3000/api');
 ```
 
 ---
 
-## 8. Run Development Server
+## Test Backend
+
+Run all integration tests:
 
 ```powershell
-npm run dev
+cd D:\DevApp\production\PMPS\server
+npm.cmd test
 ```
 
-Expected console log:
+Latest full test result:
 
 ```text
-[APP][START]
+tests 61
+suites 7
+pass 61
+fail 0
+```
+
+Test files:
+
+```text
+server/src/tests/auth-user-role.test.js
+server/src/tests/master-data.test.js
+server/src/tests/production-lots.test.js
+server/src/tests/qc-inspections.test.js
+server/src/tests/qa-sampling.test.js
+server/src/tests/reports.test.js
 ```
 
 ---
 
-## 9. API Testing
+## Test Frontend
 
-### Health API
-
-```powershell
-curl.exe http://localhost:3000/api/health
-```
-
-Expected:
-
-```json
-{
-  "success": true,
-  "message": "Service is healthy",
-  "data": {
-    "app": "running",
-    "db": "connected"
-  },
-  "meta": {
-    "request_id": "..."
-  }
-}
-```
-
-### Login
+Syntax checks:
 
 ```powershell
-$body = @{
-  username = "admin"
-  password = "Admin@123"
-} | ConvertTo-Json
-
-$response = Invoke-RestMethod `
-  -Uri "http://localhost:3000/api/auth/login" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body $body
-
-$token = $response.data.access_token
+cd D:\DevApp\production\PMPS
+node --check frontend\src\app.js
+node --check frontend\src\httpClient.js
+node --check frontend\src\reportsApi.js
+node --check frontend\src\authApi.js
+node --check frontend\src\exportCsv.js
 ```
 
-Expected:
+Static serve check:
+
+```powershell
+cd D:\DevApp\production\PMPS\frontend
+python -m http.server 5173
+```
+
+Then verify:
+
+```powershell
+Invoke-WebRequest -Uri "http://127.0.0.1:5173/" -UseBasicParsing
+Invoke-WebRequest -Uri "http://127.0.0.1:5173/src/app.js" -UseBasicParsing
+Invoke-WebRequest -Uri "http://127.0.0.1:5173/src/styles.css" -UseBasicParsing
+```
+
+Latest frontend manual result:
 
 ```text
-$response.success = true
-$response.data.access_token exists
-$response.data.user.username = admin
-$response.data.user.roles contains ADMIN
+Syntax check                 PASS
+Static frontend serve         PASS
+Backend health                PASS
+Login API                     PASS
+Dashboard API                 PASS
+Reports Lots API              PASS
+Reports Serials API           PASS
+Reports QC API                PASS
+Reports QA API                PASS
+Lot detail API                PASS
+Serial detail API             PASS
+QC detail API                 PASS
+QA detail API                 PASS
+Export QC JSON                PASS
+Export QA JSON                PASS
+Empty state API               PASS
+401 handling API              PASS
+403 handling API              PASS
 ```
 
-### Current User
+See `sprint8_backend.md` for full manual commands and results.
 
-```powershell
-curl.exe "http://localhost:3000/api/auth/me" `
-  -H "Authorization: Bearer $token"
-```
+---
 
-Expected:
+## Main API Groups
 
-```json
-{
-  "success": true,
-  "message": "Current user retrieved successfully",
-  "data": {
-    "user": {
-      "username": "admin",
-      "roles": ["ADMIN"]
-    }
-  }
-}
-```
-
-### Protected Roles API
-
-```powershell
-curl.exe "http://localhost:3000/api/roles" `
-  -H "Authorization: Bearer $token"
-```
-
-Expected:
+### Auth
 
 ```text
-success = true
+POST /api/auth/login
+GET  /api/auth/me
 ```
 
-Without token:
-
-```powershell
-curl.exe "http://localhost:3000/api/roles"
-```
-
-Expected:
+### User / Role
 
 ```text
-success = false
-error_code = UNAUTHORIZED
+GET   /api/users
+POST  /api/users
+GET   /api/users/:id
+PUT   /api/users/:id
+PATCH /api/users/:id/active
+POST  /api/users/:id/password
+GET   /api/users/:id/roles
+PUT   /api/users/:id/roles
+
+GET  /api/roles
+POST /api/roles
+GET  /api/roles/:id
+PUT  /api/roles/:id
+GET  /api/roles/:id/permissions
+PUT  /api/roles/:id/permissions
+```
+
+### Production Lot
+
+```text
+GET  /api/production-lots
+POST /api/production-lots
+GET  /api/production-lots/:id
+PUT  /api/production-lots/:id
+GET  /api/production-lots/:id/serials
+POST /api/production-lots/:id/ecn
+POST /api/production-lots/generate-serials
+GET  /api/current-lots
+```
+
+### QC Inspection
+
+```text
+GET  /api/qc/lots
+GET  /api/qc/lots/:lotId/units
+GET  /api/qc/models/:modelId/templates
+GET  /api/qc/templates/:templateId/items
+POST /api/qc/inspections
+GET  /api/qc/inspections/:id
+PUT  /api/qc/inspections/:id
+GET  /api/qc/inspections/:id/equipment-check
+POST /api/qc/inspections/:id/submit
+POST /api/qc/inspections/:id/review
+POST /api/qc/inspections/:id/approve
+POST /api/qc/inspections/:id/reject
+```
+
+### QA Sampling
+
+```text
+GET  /api/qa/lots
+GET  /api/qa/lots/:lotId/units
+GET  /api/qa/models/:modelId/templates
+GET  /api/qa/templates/:templateId/items
+POST /api/qa/samplings
+GET  /api/qa/samplings/:id
+PUT  /api/qa/samplings/:id
+GET  /api/qa/samplings/:id/equipment-check
+POST /api/qa/samplings/:id/submit
+POST /api/qa/samplings/:id/review
+POST /api/qa/samplings/:id/approve
+POST /api/qa/samplings/:id/reject
+```
+
+### Dashboard / Reports
+
+```text
+GET /api/dashboard/summary
+GET /api/dashboard/qc-summary
+GET /api/dashboard/qa-summary
+GET /api/dashboard/lot-status
+
+GET /api/reports/lots
+GET /api/reports/serials
+GET /api/reports/qc-inspections
+GET /api/reports/qa-samplings
+
+GET /api/reports/lots/:lotId
+GET /api/reports/serials/:productUnitId
+GET /api/reports/qc-inspections/:id
+GET /api/reports/qa-samplings/:id
+
+GET /api/reports/qc-inspections/export
+GET /api/reports/qa-samplings/export
+```
+
+### Edit Result / Audit Trail
+
+```text
+POST /api/qc/inspections/:id/edit-request
+POST /api/qc/inspections/:id/apply-edit
+GET  /api/qc/inspections/:id/edit-history
+
+POST /api/qa/samplings/:id/edit-request
+POST /api/qa/samplings/:id/apply-edit
+GET  /api/qa/samplings/:id/edit-history
 ```
 
 ---
 
-## 10. Response Standard
+## Permission Summary
 
-### Success Response
+```text
+User / Role APIs              UserRole or ADMIN
+Product master APIs           ProductMaster or ADMIN
+Equipment APIs                EquipmentMaster or ADMIN
+Production Lot APIs           ProductionLot or ADMIN
+QC APIs                       QCInspection or ADMIN
+QA APIs                       QASampling or ADMIN
+Report / Dashboard APIs       SearchReport or ADMIN
+Edit result APIs              EditTestResult or ADMIN
+Auth login                    Public
+Auth me                       Login required
+```
+
+---
+
+## Response Standard
+
+Success:
 
 ```json
 {
@@ -395,7 +583,7 @@ error_code = UNAUTHORIZED
 }
 ```
 
-### Error Response
+Error:
 
 ```json
 {
@@ -411,42 +599,15 @@ error_code = UNAUTHORIZED
 
 ---
 
-## 11. Logging Standard
+## Module Pattern
 
-Every API flow should include `requestId`.
-
-Examples:
-
-```text
-[REQUEST][START]
-[AUTH][LOGIN][START]
-[AUTH][LOGIN][SUCCESS]
-[RBAC][ALLOWED]
-[REQUEST][END]
-```
-
-Do not log sensitive data:
-
-```text
-password
-password_hash
-JWT token
-refresh token
-X-API-KEY
-API secret
-```
-
----
-
-## 12. Repository Pattern
-
-Each module should follow this structure:
+Backend modules follow this structure:
 
 ```text
 <module>.routes.js       Endpoint definitions
 <module>.controller.js   Request/response handling
 <module>.service.js      Business logic
-<module>.repository.js   SQL only
+<module>.repository.js   SQL access
 <module>.schema.js       zod validation
 ```
 
@@ -459,104 +620,52 @@ routes -> controller -> service -> repository -> PostgreSQL
 Rules:
 
 ```text
-- Do not write SQL in controllers.
-- Repositories must contain SQL only.
-- Services handle business logic and transactions.
-- Multi-table writes must use withTransaction.
-- All responses must use response helpers.
-- All errors must pass through errorMiddleware.
+- Controllers do not contain SQL.
+- Repositories contain SQL/data access.
+- Services contain business logic and transaction orchestration.
+- Multi-table writes use withTransaction.
+- Responses use shared response helpers.
+- Errors flow through errorMiddleware.
 ```
 
 ---
 
-## 13. Integration Test
-
-Run tests:
-
-```powershell
-npm test
-```
-
-Expected:
+## Sprint Documents
 
 ```text
-Health API test passed
-Roles API test passed
-```
-
-Test database:
-
-```text
-production_db_test
-```
-
-Integration tests must not use `production_db`.
-
----
-
-## 14. Sprint 1 Verification Checklist
-
-```text
-[ ] npm run migrate:up completed
-[ ] pgmigrations contains 3 migrations
-[ ] admin user exists and active = true
-[ ] admin has ADMIN role
-[ ] ADMIN has 13 permissions
-[ ] npm run dev starts server
-[ ] GET /api/health returns success=true
-[ ] POST /api/auth/login returns access_token
-[ ] GET /api/auth/me works with Bearer token
-[ ] GET /api/roles requires token
-[ ] GET /api/roles works with admin token
-[ ] npm test passes
+sprint1_backend.md  Backend foundation, Auth, RBAC
+sprint2_backend.md  User / Role Management
+sprint3_backend.md  Product / Equipment / Template master data
+sprint4_backend.md  Production Lot / Serial / ECN
+sprint5_backend.md  QC Inspection workflow
+sprint6_backend.md  QA Sampling workflow
+sprint7_backend.md  Report / Search / Dashboard API
+sprint8_backend.md  Frontend Dashboard/Search screens
+sprint9_backend.md  Edit Result / Audit Trail
 ```
 
 ---
 
-## 15. Next Sprint Recommendation
-
-Recommended Sprint 2 scope:
+## Security Notes
 
 ```text
-1. User Management Module
-   - GET /api/users
-   - POST /api/users
-   - PUT /api/users/:id
-   - PATCH /api/users/:id/active
-   - PUT /api/users/:id/roles
-
-2. Complete Role Management
-   - PUT /api/roles/:id
-   - GET /api/roles/:id/permissions
-   - PUT /api/roles/:id/permissions
-
-3. Product Master Module
-   - Product Category
-   - Product Sub Category
-   - Product Model
-
-4. Equipment Master Module
-   - Equipment Type
-   - Equipment Master
-   - Calibration Status
-   - Model Required Equipment
-```
-
-Recommended first module for Sprint 2:
-
-```text
-User Management Module
-```
-
----
-
-## 16. Security Notes
-
-```text
-- Do not commit .env.
+- Do not commit server/.env.
 - Change default admin password before production.
 - Use a strong JWT_SECRET.
-- Rotate JWT_SECRET if token leakage is suspected.
 - Keep debug routes disabled outside development.
 - Do not expose stack traces in production responses.
+- Do not log password, password_hash, JWT token, API key, or API secret.
+- Use HTTPS in production.
+```
+
+---
+
+## Recommended Next Steps
+
+```text
+1. Convert static frontend to React/Vite if the UI will grow further.
+2. Add real Excel/PDF export if business users need file generation server-side.
+3. Add frontend E2E tests with Playwright.
+4. Add production deployment configuration.
+5. Add audit/report export logs if export tracking is required.
 ```

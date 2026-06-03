@@ -312,10 +312,11 @@ async function getQcInspection({ id, requestId }) {
     throw notFound('QC inspection not found');
   }
 
-  const [details, equipment, approvalLogs] = await Promise.all([
+  const [details, equipment, approvalLogs, editHistory] = await Promise.all([
     repository.findInspectionDetails(id),
     repository.findInspectionEquipment(id),
     repository.findApprovalLogs(id),
+    repository.findResultEditAuditLogs(id),
   ]);
 
   return {
@@ -323,6 +324,7 @@ async function getQcInspection({ id, requestId }) {
     details,
     equipment,
     approval_logs: approvalLogs,
+    edit_history: editHistory,
   };
 }
 
@@ -513,6 +515,192 @@ async function rejectQcInspection({ id, userId, remark, requestId }) {
   });
 }
 
+async function requestQcInspectionEdit({ id, userId, reason, requestId }) {
+  console.info('[QC][EDIT_REQUEST][START]', { requestId, id, userId });
+
+  const inspection = await repository.findInspectionById(id);
+
+  if (!inspection) {
+    throw notFound('QC inspection not found');
+  }
+
+  if (inspection.status !== 'APPROVED') {
+    throw conflict('Only APPROVED QC inspection can request result edit');
+  }
+
+  await withTransaction(
+    async (client) => {
+      await repository.updateInspectionAfterApprovedEdit(
+        id,
+        {
+          status: 'EDIT_REQUESTED',
+          overall_result: inspection.overall_result,
+        },
+        client
+      );
+
+      await repository.insertResultEditAuditLog(
+        {
+          source_id: id,
+          old_overall_result: inspection.overall_result,
+          new_overall_result: inspection.overall_result,
+          edit_reason: reason,
+          edit_by: userId,
+          approval_status: 'REQUESTED',
+        },
+        client
+      );
+    },
+    {
+      requestId,
+      name: 'qc-edit-request',
+    }
+  );
+
+  return getQcInspection({ id, requestId });
+}
+
+async function applyQcInspectionEdit({ id, payload, userId, requestId }) {
+  console.info('[QC][EDIT_APPLY][START]', { requestId, id, userId });
+
+  const inspection = await repository.findInspectionById(id);
+
+  if (!inspection) {
+    throw notFound('QC inspection not found');
+  }
+
+  if (inspection.status !== 'EDIT_REQUESTED') {
+    throw conflict('QC inspection must be EDIT_REQUESTED before applying edit');
+  }
+
+  const detailIds = payload.items.map((item) => item.detail_id);
+  const existingDetails = await repository.findInspectionDetailsForEdit(id, detailIds);
+
+  if (existingDetails.length !== detailIds.length) {
+    throw validationError('Validation failed', [
+      {
+        field: 'items',
+        message: 'Some detail_id values were not found in this QC inspection',
+      },
+    ]);
+  }
+
+  const detailById = new Map(existingDetails.map((detail) => [detail.id, detail]));
+  let newOverallResult = inspection.overall_result;
+
+  await withTransaction(
+    async (client) => {
+      for (const item of payload.items) {
+        const oldDetail = detailById.get(item.detail_id);
+        const nextMeasuredValue = Object.prototype.hasOwnProperty.call(item, 'measured_value')
+          ? item.measured_value
+          : oldDetail.measured_value;
+        const nextMeasuredText = Object.prototype.hasOwnProperty.call(item, 'measured_text')
+          ? item.measured_text
+          : oldDetail.measured_text;
+        const nextResult = calculateItemResult(oldDetail, {
+          measured_value: nextMeasuredValue,
+          measured_text: nextMeasuredText,
+        });
+
+        await repository.updateInspectionDetailResult(
+          oldDetail.id,
+          {
+            measured_value: nextMeasuredValue,
+            measured_text: nextMeasuredText,
+            result: nextResult,
+            remark: Object.prototype.hasOwnProperty.call(item, 'remark') ? item.remark : oldDetail.remark,
+          },
+          client
+        );
+      }
+
+      const recalculatedDetails = await repository.findAllInspectionDetailsForOverall(id, client);
+      newOverallResult = calculateOverallResult(recalculatedDetails);
+
+      await repository.updateInspectionAfterApprovedEdit(
+        id,
+        {
+          status: 'SUBMITTED',
+          overall_result: newOverallResult,
+        },
+        client
+      );
+
+      for (const item of payload.items) {
+        const oldDetail = detailById.get(item.detail_id);
+        const nextMeasuredValue = Object.prototype.hasOwnProperty.call(item, 'measured_value')
+          ? item.measured_value
+          : oldDetail.measured_value;
+        const nextMeasuredText = Object.prototype.hasOwnProperty.call(item, 'measured_text')
+          ? item.measured_text
+          : oldDetail.measured_text;
+        const nextResult = calculateItemResult(oldDetail, {
+          measured_value: nextMeasuredValue,
+          measured_text: nextMeasuredText,
+        });
+
+        await repository.insertResultEditAuditLog(
+          {
+            source_id: id,
+            detail_id: oldDetail.id,
+            template_item_id: oldDetail.template_item_id,
+            old_measured_value: oldDetail.measured_value,
+            new_measured_value: nextMeasuredValue,
+            old_measured_text: oldDetail.measured_text,
+            new_measured_text: nextMeasuredText,
+            old_result: oldDetail.result,
+            new_result: nextResult,
+            old_overall_result: inspection.overall_result,
+            new_overall_result: newOverallResult,
+            edit_reason: payload.reason,
+            edit_by: userId,
+            approval_status: 'APPLIED',
+          },
+          client
+        );
+      }
+
+      await repository.insertApprovalLog(
+        {
+          source_id: id,
+          action: 'APPLY_EDIT',
+          old_status: 'EDIT_REQUESTED',
+          new_status: 'SUBMITTED',
+          action_by: userId,
+          remark: payload.reason,
+        },
+        client
+      );
+    },
+    {
+      requestId,
+      name: 'qc-apply-edit',
+    }
+  );
+
+  console.info('[QC][EDIT_APPLY][SUCCESS]', {
+    requestId,
+    id,
+    oldOverallResult: inspection.overall_result,
+    newOverallResult,
+  });
+
+  return getQcInspection({ id, requestId });
+}
+
+async function getQcInspectionEditHistory({ id, requestId }) {
+  console.info('[QC][EDIT_HISTORY]', { requestId, id });
+
+  const inspection = await repository.findInspectionById(id);
+
+  if (!inspection) {
+    throw notFound('QC inspection not found');
+  }
+
+  return repository.findResultEditAuditLogs(id);
+}
+
 module.exports = {
   listQcLots,
   listQcLotUnits,
@@ -526,4 +714,7 @@ module.exports = {
   reviewQcInspection,
   approveQcInspection,
   rejectQcInspection,
+  requestQcInspectionEdit,
+  applyQcInspectionEdit,
+  getQcInspectionEditHistory,
 };

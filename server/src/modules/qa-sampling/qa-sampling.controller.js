@@ -5,6 +5,8 @@ const {
   updateQaSamplingSchema,
   workflowRemarkSchema,
   rejectWorkflowSchema,
+  editRequestSchema,
+  applyApprovedResultEditSchema,
 } = require('./qa-sampling.schema');
 const {
   listQaLots,
@@ -19,6 +21,9 @@ const {
   reviewQaSampling,
   approveQaSampling,
   rejectQaSampling,
+  requestQaSamplingEdit,
+  applyQaSamplingEdit,
+  getQaSamplingEditHistory: getQaSamplingEditHistoryService,
 } = require('./qa-sampling.service');
 
 async function getQaLots(req, res, next) {
@@ -223,6 +228,58 @@ async function postRejectQaSampling(req, res, next) {
   }
 }
 
+async function postQaSamplingEditRequest(req, res, next) {
+  try {
+    const sampling = await requestQaSamplingEdit({
+      id: parsePositiveInt(req.params.id, 'id'),
+      userId: req.user.id,
+      reason: parsePayload(editRequestSchema, req.body).reason,
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QA sampling edit requested successfully',
+      data: sampling,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function postApplyQaSamplingEdit(req, res, next) {
+  try {
+    const sampling = await applyQaSamplingEdit({
+      id: parsePositiveInt(req.params.id, 'id'),
+      payload: parsePayload(applyApprovedResultEditSchema, req.body),
+      userId: req.user.id,
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QA sampling edit applied successfully',
+      data: sampling,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getQaSamplingEditHistory(req, res, next) {
+  try {
+    const history = await getQaSamplingEditHistoryService({
+      id: parsePositiveInt(req.params.id, 'id'),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QA sampling edit history retrieved successfully',
+      data: history,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 module.exports = {
   getQaLots,
   getQaLotUnits,
@@ -236,4 +293,7 @@ module.exports = {
   postReviewQaSampling,
   postApproveQaSampling,
   postRejectQaSampling,
+  postQaSamplingEditRequest,
+  postApplyQaSamplingEdit,
+  getQaSamplingEditHistory,
 };

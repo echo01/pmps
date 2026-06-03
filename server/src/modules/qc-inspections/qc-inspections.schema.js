@@ -61,9 +61,54 @@ const rejectWorkflowSchema = z.object({
   remark: z.string().trim().min(1).max(1000),
 });
 
+const editRequestSchema = z.object({
+  reason: z.string().trim().min(1).max(1000),
+});
+
+const approvedResultEditItemSchema = z
+  .object({
+    detail_id: z.coerce.number().int().positive(),
+    measured_value: z.coerce.number().optional().nullable(),
+    measured_text: z.string().max(200).optional().nullable(),
+    remark: z.string().max(500).optional().nullable(),
+  })
+  .refine(
+    (payload) => Object.prototype.hasOwnProperty.call(payload, 'measured_value')
+      || Object.prototype.hasOwnProperty.call(payload, 'measured_text')
+      || Object.prototype.hasOwnProperty.call(payload, 'remark'),
+    {
+      path: ['body'],
+      message: 'At least one editable field is required',
+    }
+  );
+
+const applyApprovedResultEditSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(1000),
+    items: z.array(approvedResultEditItemSchema).min(1),
+  })
+  .superRefine((payload, ctx) => {
+    const seen = new Set();
+
+    for (const item of payload.items) {
+      if (seen.has(item.detail_id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['items'],
+          message: 'detail_id must not be duplicated',
+        });
+        return;
+      }
+
+      seen.add(item.detail_id);
+    }
+  });
+
 module.exports = {
   saveQcInspectionSchema,
   updateQcInspectionSchema,
   workflowRemarkSchema,
   rejectWorkflowSchema,
+  editRequestSchema,
+  applyApprovedResultEditSchema,
 };

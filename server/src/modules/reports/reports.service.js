@@ -114,6 +114,7 @@ async function getQcInspectionReport({ id, requestId }) {
     details: report.details,
     equipment: report.equipment,
     approval_logs: report.approval_logs,
+    edit_history: report.edit_history,
   };
 }
 
@@ -142,6 +143,7 @@ async function getQaSamplingReport({ id, requestId }) {
     })),
     equipment: report.equipment,
     approval_logs: report.approval_logs,
+    edit_history: report.edit_history,
   };
 }
 

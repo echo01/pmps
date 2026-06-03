@@ -682,7 +682,7 @@ async function getSerialReportDetail(productUnitId) {
 }
 
 async function getQcInspectionReportDetail(id) {
-  const [header, details, equipment, approvalLogs] = await Promise.all([
+  const [header, details, equipment, approvalLogs, editHistory] = await Promise.all([
     pool.query(
       `
         SELECT
@@ -761,6 +761,37 @@ async function getQcInspectionReportDetail(id) {
       `,
       [id]
     ),
+    pool.query(
+      `
+        SELECT
+          l.id,
+          l.source_type,
+          l.source_id,
+          l.detail_id,
+          l.template_item_id,
+          i.item_code,
+          i.test_point AS item_name,
+          l.old_measured_value,
+          l.new_measured_value,
+          l.old_measured_text,
+          l.new_measured_text,
+          l.old_result,
+          l.new_result,
+          l.old_overall_result,
+          l.new_overall_result,
+          l.edit_reason,
+          u.username AS edit_by_username,
+          l.edit_at,
+          l.approval_status
+        FROM result_edit_audit_log l
+        LEFT JOIN test_template_item i ON i.id = l.template_item_id
+        LEFT JOIN app_user u ON u.id = l.edit_by
+        WHERE l.source_type = 'QC'
+          AND l.source_id = $1
+        ORDER BY l.edit_at ASC, l.id ASC
+      `,
+      [id]
+    ),
   ]);
 
   return {
@@ -768,11 +799,12 @@ async function getQcInspectionReportDetail(id) {
     details: details.rows,
     equipment: equipment.rows,
     approval_logs: approvalLogs.rows,
+    edit_history: editHistory.rows,
   };
 }
 
 async function getQaSamplingReportDetail(id) {
-  const [header, sampleUnits, details, equipment, approvalLogs] = await Promise.all([
+  const [header, sampleUnits, details, equipment, approvalLogs, editHistory] = await Promise.all([
     pool.query(
       `
         SELECT
@@ -866,6 +898,37 @@ async function getQaSamplingReportDetail(id) {
       `,
       [id]
     ),
+    pool.query(
+      `
+        SELECT
+          l.id,
+          l.source_type,
+          l.source_id,
+          l.detail_id,
+          l.template_item_id,
+          i.item_code,
+          i.test_point AS item_name,
+          l.old_measured_value,
+          l.new_measured_value,
+          l.old_measured_text,
+          l.new_measured_text,
+          l.old_result,
+          l.new_result,
+          l.old_overall_result,
+          l.new_overall_result,
+          l.edit_reason,
+          u.username AS edit_by_username,
+          l.edit_at,
+          l.approval_status
+        FROM result_edit_audit_log l
+        LEFT JOIN test_template_item i ON i.id = l.template_item_id
+        LEFT JOIN app_user u ON u.id = l.edit_by
+        WHERE l.source_type = 'QA'
+          AND l.source_id = $1
+        ORDER BY l.edit_at ASC, l.id ASC
+      `,
+      [id]
+    ),
   ]);
 
   return {
@@ -874,6 +937,7 @@ async function getQaSamplingReportDetail(id) {
     details: details.rows,
     equipment: equipment.rows,
     approval_logs: approvalLogs.rows,
+    edit_history: editHistory.rows,
   };
 }
 
