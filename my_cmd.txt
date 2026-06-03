@@ -8,3 +8,7 @@ install package
 ..\server\npm install pg dotenv
 ..\server\nnpm install -D node-pg-migrate
 
+
+admin ในระบบ
+username = "admin"
+password = "Admin@123"
