@@ -18,7 +18,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -259,6 +260,50 @@ h2 {
   gap: 14px;
 }
 
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.formGrid .span2 {
+  grid-column: span 2;
+}
+
+.formActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.previewPanel {
+  margin-top: 18px;
+}
+
+.serialPreview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dfe6ee;
+  border-radius: 8px;
+  background: #f8fafb;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.serialPreview span {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #24313a;
+  background: #e8edf2;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -268,7 +313,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 39px;
   padding: 8px 10px;
@@ -276,6 +322,11 @@ select {
   border-radius: 7px;
   background: #ffffff;
   color: #172026;
+}
+
+textarea {
+  min-height: 82px;
+  resize: vertical;
 }
 
 .filters {
@@ -290,6 +341,7 @@ select {
 }
 
 .primaryButton,
+.dangerButton,
 .textButton,
 .iconButton,
 .tabs button,
@@ -308,11 +360,21 @@ select {
   background: #0f766e;
 }
 
+.dangerButton {
+  padding: 0 16px;
+  color: #ffffff;
+  background: #b91c1c;
+}
+
 .textButton,
 .pagination button {
   padding: 0 12px;
   color: #24313a;
   background: #eef3f7;
+}
+
+.dangerText {
+  color: #991b1b;
 }
 
 .iconButton {
@@ -446,6 +508,146 @@ select {
   font-weight: 800;
 }
 
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(23, 32, 38, 0.48);
+}
+
+.modalPanel {
+  width: min(760px, 100%);
+  max-height: min(86vh, 860px);
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #dfe6ee;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(21, 32, 43, 0.22);
+}
+
+.confirmPanel {
+  width: min(440px, 100%);
+}
+
+.modalHeader,
+.modalActions,
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modalActions {
+  justify-content: flex-end;
+}
+
+.modalGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 39px;
+}
+
+.checkRow input {
+  width: auto;
+  min-height: auto;
+}
+
+.filterCheck {
+  align-self: end;
+  padding-bottom: 8px;
+}
+
+.fieldError {
+  display: block;
+  color: #991b1b;
+  font-weight: 800;
+}
+
+.masterFilters {
+  grid-template-columns: repeat(4, minmax(150px, 1fr)) auto auto;
+}
+
+.subPanel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0 4px;
+}
+
+.tableScroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.transactionFilters {
+  grid-template-columns: minmax(240px, 1fr) auto;
+  margin-bottom: 14px;
+}
+
+.transactionSummary {
+  min-width: 320px;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+}
+
+.transactionHint {
+  padding: 12px;
+  border: 1px solid #dfe6ee;
+  border-radius: 8px;
+  color: #65717c;
+  background: #f8fafb;
+}
+
+.equipmentCheckGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.equipmentCheckGrid article {
+  padding: 12px;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.equipmentCheckGrid span {
+  display: block;
+  margin-bottom: 8px;
+  color: #65717c;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.approvalActions {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(220px, 1fr) repeat(4, auto);
+  gap: 10px;
+  align-items: end;
+}
+
+.workflowRemark {
+  min-width: 220px;
+}
+
+.sampleGrid {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0;
+  border-top: 1px solid #e8edf2;
+}
+
 @media (max-width: 1180px) {
   .filters {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -468,8 +670,15 @@ select {
   }
 
   .filters,
+  .formGrid,
+  .approvalActions,
+  .equipmentCheckGrid,
   .kvGrid,
   .summaryGrid {
     grid-template-columns: 1fr;
+  }
+
+  .formGrid .span2 {
+    grid-column: auto;
   }
 }

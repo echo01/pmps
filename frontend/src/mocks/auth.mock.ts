@@ -8,7 +8,19 @@ const adminUser: UserSession = {
   full_name: 'System Administrator',
   email: 'admin@example.com',
   roles: ['ADMIN'],
-  permissions: ['ADMIN', 'Dashboard', 'SearchReport', 'EditTestResult', 'QCInspection', 'QASampling'],
+  permissions: [
+    'ADMIN',
+    'Dashboard',
+    'SearchReport',
+    'EditTestResult',
+    'QCInspection',
+    'QASampling',
+    'ProductionLot',
+    'ProductMaster',
+    'EquipmentMaster',
+    'ModelRequiredEquipment',
+    'TestTemplate',
+  ],
 };
 
 export async function mockLogin(username: string): Promise<LoginResult> {

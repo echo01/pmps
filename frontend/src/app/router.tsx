@@ -6,6 +6,18 @@ import { NoPermission } from '../components/common/NoPermission';
 import { MainLayout } from '../layouts/MainLayout';
 import { LoginPage } from '../pages/LoginPage';
 import { DashboardPage } from '../pages/dashboard/DashboardPage';
+import { EquipmentMasterPage } from '../pages/master-data/EquipmentMasterPage';
+import { EquipmentTypesPage } from '../pages/master-data/EquipmentTypesPage';
+import { ModelRequiredEquipmentPage } from '../pages/master-data/ModelRequiredEquipmentPage';
+import { ProductCategoriesPage } from '../pages/master-data/ProductCategoriesPage';
+import { ProductModelsPage } from '../pages/master-data/ProductModelsPage';
+import { ProductSubCategoriesPage } from '../pages/master-data/ProductSubCategoriesPage';
+import { TemplateDetailPage } from '../pages/master-data/TemplateDetailPage';
+import { TestTemplatesPage } from '../pages/master-data/TestTemplatesPage';
+import { ProductionLotDetailPage } from '../pages/production/ProductionLotDetailPage';
+import { ProductionLotsPage } from '../pages/production/ProductionLotsPage';
+import { QaSamplingPage } from '../pages/qa/QaSamplingPage';
+import { QcInspectionPage } from '../pages/qc/QcInspectionPage';
 import { LotDetailPage } from '../pages/reports/LotDetailPage';
 import { QaSamplingDetailPage } from '../pages/reports/QaSamplingDetailPage';
 import { QcInspectionDetailPage } from '../pages/reports/QcInspectionDetailPage';
@@ -38,6 +50,62 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
+    ],
+  },
+  {
+    path: '/production-lots',
+    element: <ProtectedRoute permission="ProductionLot" />,
+    children: [
+      { index: true, element: <ProductionLotsPage /> },
+      { path: ':id', element: <ProductionLotDetailPage /> },
+    ],
+  },
+  {
+    path: '/products',
+    element: <ProtectedRoute permission="ProductMaster" />,
+    children: [
+      { path: 'categories', element: <ProductCategoriesPage /> },
+      { path: 'sub-categories', element: <ProductSubCategoriesPage /> },
+      { path: 'models', element: <ProductModelsPage /> },
+    ],
+  },
+  {
+    path: '/equipment',
+    element: <ProtectedRoute permission="EquipmentMaster" />,
+    children: [
+      { path: 'types', element: <EquipmentTypesPage /> },
+      { path: 'master', element: <EquipmentMasterPage /> },
+    ],
+  },
+  {
+    path: '/equipment/model-required',
+    element: <ProtectedRoute permission="ModelRequiredEquipment" />,
+    children: [
+      { index: true, element: <ModelRequiredEquipmentPage /> },
+    ],
+  },
+  {
+    path: '/templates',
+    element: <ProtectedRoute permission="TestTemplate" />,
+    children: [
+      { index: true, element: <TestTemplatesPage /> },
+      { path: ':templateId', element: <TemplateDetailPage /> },
+    ],
+  },
+  {
+    path: '/qc/inspection',
+    element: <ProtectedRoute permission="QCInspection" />,
+    children: [
+      { index: true, element: <QcInspectionPage /> },
+      { path: ':inspectionId', element: <QcInspectionPage /> },
+    ],
+  },
+  {
+    path: '/qa/sampling',
+    element: <ProtectedRoute permission="QASampling" />,
+    children: [
+      { index: true, element: <QaSamplingPage /> },
+      { path: ':qaSamplingId', element: <QaSamplingPage /> },
     ],
   },
   {
