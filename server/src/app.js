@@ -10,6 +10,7 @@ const { debugRoutes } = require('./modules/debug/debug.routes');
 const { rolesRoutes } = require('./modules/roles/roles.routes');
 const { authRoutes } = require('./modules/auth/auth.routes');
 const { usersRoutes } = require('./modules/users/users.routes');
+const { profileRoutes } = require('./modules/profile/profile.routes');
 const { productsRoutes } = require('./modules/products/products.routes');
 const { equipmentRoutes } = require('./modules/equipment/equipment.routes');
 const { modelRequiredEquipmentRoutes } = require('./modules/model-required-equipment/model-required-equipment.routes');
@@ -42,6 +43,7 @@ app.use(express.json());
 
 app.use('/api', healthRoutes);
 app.use('/api', authRoutes);
+app.use('/api', profileRoutes);
 app.use('/api', usersRoutes);
 app.use('/api', rolesRoutes);
 app.use('/api', productsRoutes);

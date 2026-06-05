@@ -4,6 +4,8 @@ const {
   createNewUser,
   updateExistingUser,
   setUserActive,
+  lockUser,
+  unlockUser,
   setUserPassword,
   getUserRoles,
   replaceUserRoles,
@@ -143,11 +145,45 @@ async function patchUserActive(req, res, next) {
     const user = await setUserActive({
       id: parseId(req.params.id),
       active: payload.active,
+      actorUserId: req.user.id,
       requestId: req.requestId,
     });
 
     return successResponse(res, {
       message: 'User active status updated successfully',
+      data: user,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function postUserLock(req, res, next) {
+  try {
+    const user = await lockUser({
+      id: parseId(req.params.id),
+      actorUserId: req.user.id,
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'User locked successfully',
+      data: user,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function postUserUnlock(req, res, next) {
+  try {
+    const user = await unlockUser({
+      id: parseId(req.params.id),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'User unlocked successfully',
       data: user,
     });
   } catch (error) {
@@ -195,6 +231,7 @@ async function putRolesByUser(req, res, next) {
     const roles = await replaceUserRoles({
       id: parseId(req.params.id),
       roleIds: payload.role_ids,
+      actorUserId: req.user.id,
       requestId: req.requestId,
     });
 
@@ -213,6 +250,8 @@ module.exports = {
   postUser,
   putUser,
   patchUserActive,
+  postUserLock,
+  postUserUnlock,
   postUserPassword,
   getRolesByUser,
   putRolesByUser,

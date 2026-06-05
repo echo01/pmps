@@ -163,9 +163,29 @@ function assertEquipmentValid(validation) {
   }
 }
 
-async function listQcLots({ search, requestId }) {
-  console.info('[QC][LOTS][LIST]', { requestId, search });
-  return repository.findQcLots({ search });
+function buildQcSummary(serials) {
+  const initial = {
+    not_started: 0,
+    draft: 0,
+    submitted: 0,
+    reviewed: 0,
+    approved: 0,
+    rejected: 0,
+    edit_requested: 0,
+  };
+
+  return serials.reduce((summary, row) => {
+    const key = String(row.qc_status || 'NOT_STARTED').toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(summary, key)) {
+      summary[key] += 1;
+    }
+    return summary;
+  }, initial);
+}
+
+async function listQcLots({ filters = {}, requestId }) {
+  console.info('[QC][LOTS][LIST]', { requestId, filters });
+  return repository.findQcLots(filters);
 }
 
 async function listQcLotUnits({ lotId, requestId }) {
@@ -178,6 +198,27 @@ async function listQcLotUnits({ lotId, requestId }) {
   }
 
   return repository.findLotUnits(lotId);
+}
+
+async function getQcLotInspectionStatus({ lotId, requestId }) {
+  console.info('[QC][LOTS][INSPECTION_STATUS]', { requestId, lotId });
+
+  const lot = await repository.findLotById(lotId);
+
+  if (!lot) {
+    throw notFound('Production lot not found');
+  }
+
+  const serials = await repository.findLotInspectionStatus(lotId);
+
+  return {
+    lot: {
+      ...lot,
+      serial_count: serials.length,
+    },
+    summary: buildQcSummary(serials),
+    serials,
+  };
 }
 
 async function listQcTemplatesByModel({ modelId, requestId }) {
@@ -704,6 +745,7 @@ async function getQcInspectionEditHistory({ id, requestId }) {
 module.exports = {
   listQcLots,
   listQcLotUnits,
+  getQcLotInspectionStatus,
   listQcTemplatesByModel,
   getQcTemplateItems,
   createQcInspection,

@@ -9,15 +9,17 @@ export type ResultDraft = {
 type Props = {
   item: TemplateItem;
   value: ResultDraft;
+  readOnly?: boolean;
   onChange: (value: ResultDraft) => void;
 };
 
-export function ResultInputCell({ item, value, onChange }: Props) {
+export function ResultInputCell({ item, value, readOnly, onChange }: Props) {
   const checkType = (item.check_type || '').toUpperCase();
 
   if (checkType === 'NUMERIC') {
     return (
       <input
+        disabled={readOnly}
         inputMode="decimal"
         placeholder="Value"
         value={value.measured_value}
@@ -29,6 +31,7 @@ export function ResultInputCell({ item, value, onChange }: Props) {
   if (checkType === 'BOOLEAN') {
     return (
       <select
+        disabled={readOnly}
         value={value.measured_text}
         onChange={(event) => onChange({ ...value, measured_value: '', measured_text: event.target.value })}
       >
@@ -43,6 +46,7 @@ export function ResultInputCell({ item, value, onChange }: Props) {
 
   return (
     <input
+      disabled={readOnly}
       placeholder="Text"
       value={value.measured_text}
       onChange={(event) => onChange({ ...value, measured_value: '', measured_text: event.target.value })}

@@ -4,9 +4,9 @@ function executor(client) {
   return client || pool;
 }
 
-async function findQcLots({ search } = {}) {
+async function findQcLots({ search, model_code, lot_number, status, date_from, date_to } = {}) {
   const values = [];
-  const where = [`pl.status <> 'CANCELLED'`];
+  const where = status ? [] : [`pl.status <> 'CANCELLED'`];
 
   if (search) {
     values.push(`%${search}%`);
@@ -15,6 +15,31 @@ async function findQcLots({ search } = {}) {
       OR pm.model_code ILIKE $${values.length}
       OR pm.product_name ILIKE $${values.length}
     )`);
+  }
+
+  if (model_code) {
+    values.push(`%${model_code}%`);
+    where.push(`pm.model_code ILIKE $${values.length}`);
+  }
+
+  if (lot_number) {
+    values.push(`%${lot_number}%`);
+    where.push(`pl.lot_number ILIKE $${values.length}`);
+  }
+
+  if (status) {
+    values.push(status);
+    where.push(`pl.status = $${values.length}`);
+  }
+
+  if (date_from) {
+    values.push(date_from);
+    where.push(`pl.production_date >= $${values.length}`);
+  }
+
+  if (date_to) {
+    values.push(date_to);
+    where.push(`pl.production_date <= $${values.length}`);
   }
 
   const result = await pool.query(
@@ -42,6 +67,41 @@ async function findQcLots({ search } = {}) {
   );
 
   return result.rows;
+}
+
+async function findLotInspectionStatus(lotId) {
+  const result = await pool.query(
+    `
+      SELECT
+        pu.id AS product_unit_id,
+        pu.serial_number,
+        pu.product_status AS unit_status,
+        ih.id AS inspection_id,
+        ih.inspection_no,
+        ih.template_id,
+        tt.template_name,
+        ih.status AS qc_status,
+        ih.overall_result,
+        ih.updated_at
+      FROM product_unit pu
+      LEFT JOIN LATERAL (
+        SELECT ih.*
+        FROM inspection_header ih
+        WHERE ih.product_unit_id = pu.id
+        ORDER BY ih.inspection_no DESC, ih.id DESC
+        LIMIT 1
+      ) ih ON true
+      LEFT JOIN test_template tt ON tt.id = ih.template_id
+      WHERE pu.lot_id = $1
+      ORDER BY pu.serial_number ASC
+    `,
+    [lotId]
+  );
+
+  return result.rows.map((row) => ({
+    ...row,
+    qc_status: row.qc_status || 'NOT_STARTED',
+  }));
 }
 
 async function findLotById(lotId) {
@@ -795,6 +855,7 @@ module.exports = {
   findQcLots,
   findLotById,
   findLotUnits,
+  findLotInspectionStatus,
   findInspectionTemplatesByModelId,
   findTemplateById,
   findInspectionTemplateItems,

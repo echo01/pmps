@@ -3,11 +3,17 @@ import { Save, Search } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { qcApi, QcInspectionPayload, TemplateItem, TransactionLot, TransactionUnit } from '../../api/qc.api';
-import { modelRequiredEquipmentApi } from '../../api/modelRequiredEquipment.api';
+import { useAuth } from '../../auth/useAuth';
+import { can } from '../../auth/permission';
 import { StatusBadge } from '../../components/badges/StatusBadge';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorAlert } from '../../components/common/ErrorAlert';
 import { LoadingPanel } from '../../components/common/LoadingPanel';
+import { ApplyEditPanel } from '../../components/edit-result/ApplyEditPanel';
+import { EditHistoryPanel, latestEditReason } from '../../components/edit-result/EditHistoryPanel';
+import { EditRequestModal } from '../../components/edit-result/EditRequestModal';
+import { EditStatusBanner } from '../../components/edit-result/EditStatusBanner';
+import { EditResultDetail } from '../../components/edit-result/editResultTypes';
 import { ApprovalActions } from '../../components/transaction/ApprovalActions';
 import { EquipmentCheckPanel } from '../../components/transaction/EquipmentCheckPanel';
 import { EquipmentSelector } from '../../components/transaction/EquipmentSelector';
@@ -48,15 +54,21 @@ export function QcInspectionPage() {
   const { inspectionId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const permissions = user?.permissions || [];
+  const canEditResult = can('EditTestResult', permissions);
+  const canViewEditHistory = can('SearchReport', permissions);
   const [search, setSearch] = useState('');
   const [selectedLot, setSelectedLot] = useState<TransactionLot | null>(null);
   const [selectedUnit, setSelectedUnit] = useState<TransactionUnit | null>(null);
   const [templateId, setTemplateId] = useState('');
   const [equipmentIds, setEquipmentIds] = useState<number[]>([]);
+  const [equipmentRequired, setEquipmentRequired] = useState(true);
   const [drafts, setDrafts] = useState<Record<number, ResultDraft>>({});
   const [inspectionNo, setInspectionNo] = useState('1');
   const [stationName, setStationName] = useState('QC-STATION-01');
   const [remark, setRemark] = useState('');
+  const [editRequestOpen, setEditRequestOpen] = useState(false);
 
   const detail = useQuery({
     queryKey: ['qc-inspection', inspectionId],
@@ -96,6 +108,12 @@ export function QcInspectionPage() {
     enabled: false,
   });
 
+  const editHistory = useQuery({
+    queryKey: ['qc-inspection-edit-history', inspectionId],
+    queryFn: () => qcApi.getInspectionEditHistory(inspectionId || ''),
+    enabled: Boolean(inspectionId) && canViewEditHistory,
+  });
+
   useEffect(() => {
     if (!detail.data) return;
     setSelectedLot({
@@ -124,6 +142,10 @@ export function QcInspectionPage() {
     const results = (items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[item.id] || emptyDraft()) }));
     return calculateOverallResult(results);
   }, [drafts, items.data]);
+  const status = detail.data?.status || 'NEW';
+  const readOnly = Boolean(inspectionId) && !['DRAFT'].includes(status);
+  const selectedEditHistory = editHistory.data || detail.data?.edit_history || [];
+  const editDetails: EditResultDetail[] = (detail.data?.details || []).map((row) => ({ ...row, sample_label: detail.data?.serial_number }));
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -151,6 +173,23 @@ export function QcInspectionPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['qc-inspection', inspectionId] });
       equipmentCheck.refetch();
+    },
+  });
+
+  const requestEditMutation = useMutation({
+    mutationFn: (reason: string) => qcApi.requestEditInspection(inspectionId || '', { reason }),
+    onSuccess: () => {
+      setEditRequestOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['qc-inspection', inspectionId] });
+      queryClient.invalidateQueries({ queryKey: ['qc-inspection-edit-history', inspectionId] });
+    },
+  });
+
+  const applyEditMutation = useMutation({
+    mutationFn: (payload: Parameters<typeof qcApi.applyEditInspection>[1]) => qcApi.applyEditInspection(inspectionId || '', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['qc-inspection', inspectionId] });
+      queryClient.invalidateQueries({ queryKey: ['qc-inspection-edit-history', inspectionId] });
     },
   });
 
@@ -188,6 +227,7 @@ export function QcInspectionPage() {
       {detail.error ? <ErrorAlert error={detail.error} /> : null}
       {saveMutation.error ? <ErrorAlert error={saveMutation.error} title="Unable to save QC draft" /> : null}
       {workflowMutation.error ? <ErrorAlert error={workflowMutation.error} title="Unable to update workflow" /> : null}
+      {requestEditMutation.error ? <ErrorAlert error={requestEditMutation.error} title="Unable to request edit" /> : null}
 
       <section className="panel">
         <h2>Select Lot</h2>
@@ -209,31 +249,36 @@ export function QcInspectionPage() {
           <label>Serial<select disabled={Boolean(inspectionId)} value={selectedUnit?.id || ''} onChange={(event) => selectUnit((units.data || []).find((unit) => unit.id === Number(event.target.value))!)}>
             <option value="">Select serial</option>{units.data?.map((unit) => <option key={unit.id} value={unit.id}>{unit.serial_number} ({unit.unit_status})</option>)}
           </select></label>
-          <label>Template<select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+          <label>Template<select disabled={readOnly} value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
             <option value="">Select QC template</option>{templates.data?.map((template) => <option key={template.id} value={template.id}>{template.template_name} rev {template.revision || '-'}</option>)}
           </select></label>
-          <label>Inspection No<input value={inspectionNo} onChange={(event) => setInspectionNo(event.target.value)} /></label>
-          <label>Station<input value={stationName} onChange={(event) => setStationName(event.target.value)} /></label>
-          <label className="span2">Remark<input value={remark} onChange={(event) => setRemark(event.target.value)} /></label>
+          <label>Inspection No<input disabled={readOnly} value={inspectionNo} onChange={(event) => setInspectionNo(event.target.value)} /></label>
+          <label>Station<input disabled={readOnly} value={stationName} onChange={(event) => setStationName(event.target.value)} /></label>
+          <label className="span2">Remark<input disabled={readOnly} value={remark} onChange={(event) => setRemark(event.target.value)} /></label>
         </div>
       </section>
 
-      <section className="panel"><h2>Equipment</h2><EquipmentSelector modelId={selectedLot?.model_id} selectedIds={equipmentIds} onChange={setEquipmentIds} /></section>
+      <section className="panel"><h2>Equipment</h2><EquipmentSelector modelId={selectedLot?.model_id} selectedIds={equipmentIds} onChange={readOnly ? () => undefined : setEquipmentIds} onRequirementChange={setEquipmentRequired} /></section>
       <section className="panel"><h2>Equipment Check</h2><EquipmentCheckPanel check={equipmentCheck.data || null} /></section>
+      <EditStatusBanner status={status} latestReason={latestEditReason(selectedEditHistory)} />
 
       <form className="pageStack" onSubmit={submit}>
         <section className="panel">
           <h2>Result Grid</h2>
           {items.isLoading ? <LoadingPanel /> : null}
-          {items.data?.length ? <ResultGrid items={items.data} values={drafts} onChange={(itemId, value) => setDrafts({ ...drafts, [itemId]: value })} /> : <EmptyState message="Select a template to enter results" />}
+          {items.data?.length ? <ResultGrid readOnly={readOnly} items={items.data} values={drafts} onChange={(itemId, value) => setDrafts({ ...drafts, [itemId]: value })} /> : <EmptyState message="Select a template to enter results" />}
         </section>
         <div className="formActions">
-          <button className="primaryButton" disabled={saveMutation.isPending || !selectedUnit || !templateId || !equipmentIds.length || !items.data?.length} type="submit"><Save size={16} /> Save Draft</button>
+          {!readOnly ? <button className="primaryButton" disabled={saveMutation.isPending || !selectedUnit || !templateId || (equipmentRequired && !equipmentIds.length) || !items.data?.length} type="submit"><Save size={16} /> Save Draft</button> : null}
           {inspectionId ? <button className="textButton" type="button" onClick={() => equipmentCheck.refetch()}>Run Equipment Check</button> : null}
+          {inspectionId && status === 'APPROVED' && canEditResult ? <button className="primaryButton" type="button" onClick={() => setEditRequestOpen(true)}>Request Edit</button> : null}
         </div>
       </form>
 
       {inspectionId ? <section className="panel"><ApprovalActions status={detail.data?.status} busy={workflowMutation.isPending} onSubmit={(workflowRemark) => workflowMutation.mutate({ action: 'submit', workflowRemark })} onReview={(workflowRemark) => workflowMutation.mutate({ action: 'review', workflowRemark })} onApprove={(workflowRemark) => workflowMutation.mutate({ action: 'approve', workflowRemark })} onReject={(workflowRemark) => workflowMutation.mutate({ action: 'reject', workflowRemark })} /></section> : null}
+      {inspectionId && status === 'EDIT_REQUESTED' && canEditResult ? <ApplyEditPanel sourceLabel="QC inspection" details={editDetails} templates={items.data || []} busy={applyEditMutation.isPending} error={applyEditMutation.error} onApply={(payload) => applyEditMutation.mutate(payload)} /> : null}
+      {inspectionId && canViewEditHistory ? <EditHistoryPanel rows={selectedEditHistory} /> : null}
+      <EditRequestModal open={editRequestOpen} busy={requestEditMutation.isPending} error={requestEditMutation.error} onClose={() => setEditRequestOpen(false)} onSubmit={(reason) => requestEditMutation.mutate(reason)} />
     </div>
   );
 }

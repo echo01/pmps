@@ -124,6 +124,12 @@ export const httpClient = {
       body: JSON.stringify(body),
     });
   },
+  patch<T>(path: string, body: unknown) {
+    return apiRequest<T>(path, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+  },
   delete<T>(path: string) {
     return apiRequest<T>(path, { method: 'DELETE' });
   },

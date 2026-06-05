@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { modelRequiredEquipmentApi } from '../../api/modelRequiredEquipment.api';
 import { StatusBadge } from '../badges/StatusBadge';
 import { EmptyState } from '../common/EmptyState';
@@ -10,23 +11,38 @@ type Props = {
   modelId?: number | null;
   selectedIds: number[];
   onChange: (ids: number[]) => void;
+  onRequirementChange?: (required: boolean) => void;
 };
 
-export function EquipmentSelector({ modelId, selectedIds, onChange }: Props) {
-  const query = useQuery({
+export function EquipmentSelector({ modelId, selectedIds, onChange, onRequirementChange }: Props) {
+  const availableQuery = useQuery({
     queryKey: ['transaction-equipment', modelId],
     queryFn: () => modelRequiredEquipmentApi.getAvailableEquipmentByModel(modelId || 0),
     enabled: Boolean(modelId),
   });
+  const requiredQuery = useQuery({
+    queryKey: ['transaction-required-equipment', modelId],
+    queryFn: () => modelRequiredEquipmentApi.getRequiredEquipmentByModel(modelId || 0),
+    enabled: Boolean(modelId),
+  });
+
+  const hasMandatoryRequirement = Boolean(requiredQuery.data?.some((row) => row.mandatory));
+
+  useEffect(() => {
+    if (!requiredQuery.isSuccess) return;
+    onRequirementChange?.(hasMandatoryRequirement);
+  }, [hasMandatoryRequirement, onRequirementChange, requiredQuery.isSuccess]);
 
   function toggle(id: number) {
     onChange(selectedIds.includes(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id]);
   }
 
   if (!modelId) return <EmptyState message="Select lot before selecting equipment" />;
-  if (query.isLoading) return <LoadingPanel />;
-  if (query.error) return <ErrorAlert error={query.error} />;
-  if (!query.data?.length) return <EmptyState message="No available equipment for this model" />;
+  if (availableQuery.isLoading || requiredQuery.isLoading) return <LoadingPanel />;
+  if (availableQuery.error) return <ErrorAlert error={availableQuery.error} />;
+  if (requiredQuery.error) return <ErrorAlert error={requiredQuery.error} />;
+  if (!requiredQuery.data?.length) return <EmptyState message="No equipment required for this model" />;
+  if (!availableQuery.data?.length) return <EmptyState message="Required equipment is not available for this model" />;
 
   return (
     <div className="tableScroll">
@@ -35,7 +51,7 @@ export function EquipmentSelector({ modelId, selectedIds, onChange }: Props) {
           <tr><th>Select</th><th>Equipment</th><th>Type</th><th>Status</th><th>Calibration</th><th>Required</th></tr>
         </thead>
         <tbody>
-          {query.data.map((row) => (
+          {availableQuery.data.map((row) => (
             <tr key={row.equipment_id}>
               <td>
                 <input

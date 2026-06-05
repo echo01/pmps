@@ -1,6 +1,6 @@
 import { httpClient } from './httpClient';
 import { QueryValue, toQueryString } from '../utils/queryString';
-import { EquipmentCheck, QcItemPayload, TemplateItem, TemplateSection, TransactionLot, TransactionTemplate, TransactionUnit } from './qc.api';
+import { ApprovedResultEditPayload, EditHistoryRow, EquipmentCheck, QcItemPayload, TemplateItem, TemplateSection, TransactionLot, TransactionTemplate, TransactionUnit } from './qc.api';
 
 function flattenTemplateSections(sections: TemplateSection[]) {
   return sections.flatMap((section) => section.items.map((item) => ({
@@ -50,17 +50,54 @@ export type QaSampling = {
     sample_no: number;
     serial_number: string;
     unit_result: string;
+    updated_at?: string | null;
     remark?: string | null;
     details: Array<QcItemPayload & {
       id: number;
       item_code: string;
       item_name: string;
       check_type: string;
+      spec_min?: number | string | null;
+      spec_max?: number | string | null;
+      unit?: string | null;
+      mandatory?: boolean | null;
       result: string;
     }>;
   }>;
   equipment: Array<{ equipment_id: number; equipment_code: string; equipment_name: string; status: string; calibration_due_date?: string | null }>;
   approval_logs: Array<Record<string, string | number | null>>;
+  edit_history?: EditHistoryRow[];
+};
+
+export type QaSampleStatus = {
+  product_unit_id: number;
+  lot_id: number;
+  model_id: number;
+  serial_number: string;
+  unit_status: string;
+  qa_sampling_id?: number | null;
+  sampling_no?: number | null;
+  template_id?: number | null;
+  template_name?: string | null;
+  revision?: string | null;
+  qa_status: string;
+  unit_result?: string | null;
+  overall_result?: string | null;
+  updated_at?: string | null;
+};
+
+export type QaLotSamplingStatus = {
+  lot: TransactionLot;
+  summary: {
+    not_started: number;
+    draft: number;
+    submitted: number;
+    reviewed: number;
+    approved: number;
+    rejected: number;
+    edit_requested: number;
+  };
+  samples: QaSampleStatus[];
 };
 
 export const qaApi = {
@@ -69,6 +106,9 @@ export const qaApi = {
   },
   async getLotUnits(lotId: string | number) {
     return (await httpClient.get<TransactionUnit[]>(`/qa/lots/${lotId}/units`)).data;
+  },
+  async getLotSamplingStatus(lotId: string | number) {
+    return (await httpClient.get<QaLotSamplingStatus>(`/qa/lots/${lotId}/sampling-status`)).data;
   },
   async getTemplatesByModel(modelId: string | number) {
     return (await httpClient.get<TransactionTemplate[]>(`/qa/models/${modelId}/templates`)).data;
@@ -99,5 +139,14 @@ export const qaApi = {
   },
   async reject(id: string | number, remark: string) {
     return (await httpClient.post<QaSampling>(`/qa/samplings/${id}/reject`, { remark })).data;
+  },
+  async requestEditSampling(id: string | number, payload: { reason: string }) {
+    return (await httpClient.post<QaSampling>(`/qa/samplings/${id}/edit-request`, payload)).data;
+  },
+  async applyEditSampling(id: string | number, payload: ApprovedResultEditPayload) {
+    return (await httpClient.post<QaSampling>(`/qa/samplings/${id}/apply-edit`, payload)).data;
+  },
+  async getSamplingEditHistory(id: string | number) {
+    return (await httpClient.get<EditHistoryRow[]>(`/qa/samplings/${id}/edit-history`)).data;
   },
 };

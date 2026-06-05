@@ -380,6 +380,19 @@ describe('Sprint 5 QC Inspection integration', () => {
     assert.ok(units.body.data[0].serial_number);
   });
 
+  it('lists QC inspection status by lot with NOT_STARTED rows', async () => {
+    const response = await request('GET', `/api/qc/lots/${state.lotId}/inspection-status`, {
+      token: adminToken,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.lot.id, state.lotId);
+    assert.equal(response.body.data.serials.length, 2);
+    assert.ok(response.body.data.serials.some((row) => row.product_unit_id === state.productUnitId));
+    assert.ok(response.body.data.serials.every((row) => row.qc_status === 'NOT_STARTED'));
+    assert.equal(response.body.data.summary.not_started, 2);
+  });
+
   it('lists INSPECTION templates and grouped template items', async () => {
     const templates = await request('GET', `/api/qc/models/${state.modelId}/templates`, {
       token: adminToken,
@@ -413,6 +426,21 @@ describe('Sprint 5 QC Inspection integration', () => {
     assert.equal(response.body.data.equipment.length, 1);
     assert.ok(response.body.data.details.every((row) => row.result === 'PASS'));
     state.inspectionId = response.body.data.id;
+  });
+
+  it('updates QC inspection status table after draft creation', async () => {
+    const response = await request('GET', `/api/qc/lots/${state.lotId}/inspection-status`, {
+      token: adminToken,
+    });
+
+    const inspectedSerial = response.body.data.serials.find((row) => row.product_unit_id === state.productUnitId);
+
+    assert.equal(response.status, 200);
+    assert.equal(inspectedSerial.inspection_id, state.inspectionId);
+    assert.equal(inspectedSerial.qc_status, 'DRAFT');
+    assert.equal(inspectedSerial.overall_result, 'PASS');
+    assert.equal(response.body.data.summary.draft, 1);
+    assert.equal(response.body.data.summary.not_started, 1);
   });
 
   it('duplicate QC inspection returns 409', async () => {

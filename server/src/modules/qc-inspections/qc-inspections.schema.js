@@ -30,7 +30,7 @@ const saveQcInspectionSchema = z
     template_id: z.coerce.number().int().positive(),
     inspection_no: z.coerce.number().int().positive(),
     station_name: z.string().trim().min(1).max(100),
-    equipment_ids: z.array(z.coerce.number().int().positive()).min(1),
+    equipment_ids: z.array(z.coerce.number().int().positive()),
     items: z.array(itemSchema).min(1),
     remark: z.string().max(1000).optional().nullable(),
   })
@@ -39,7 +39,7 @@ const saveQcInspectionSchema = z
 const updateQcInspectionSchema = z
   .object({
     station_name: z.string().trim().min(1).max(100).optional(),
-    equipment_ids: z.array(z.coerce.number().int().positive()).min(1).optional(),
+    equipment_ids: z.array(z.coerce.number().int().positive()).optional(),
     items: z.array(itemSchema).min(1).optional(),
     remark: z.string().max(1000).optional().nullable(),
   })

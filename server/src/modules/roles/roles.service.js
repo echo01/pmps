@@ -4,6 +4,7 @@ const {
   findRoleByCode,
   createRole,
   updateRole,
+  findPermissions,
   findPermissionsByRoleId,
   countPermissionsByIds,
   deleteRolePermissions,
@@ -132,6 +133,21 @@ async function getRolePermissions({ id, requestId }) {
   return permissions;
 }
 
+async function listPermissions({ requestId }) {
+  console.info('[ROLES][PERMISSIONS_LIST][START]', {
+    requestId,
+  });
+
+  const permissions = await findPermissions();
+
+  console.info('[ROLES][PERMISSIONS_LIST][SUCCESS]', {
+    requestId,
+    count: permissions.length,
+  });
+
+  return permissions;
+}
+
 async function replaceRolePermissions({ id, permissionIds, requestId }) {
   const uniquePermissionIds = uniqueIds(permissionIds);
 
@@ -188,6 +204,7 @@ module.exports = {
   getRoleById,
   createNewRole,
   updateExistingRole,
+  listPermissions,
   getRolePermissions,
   replaceRolePermissions,
 };

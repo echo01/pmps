@@ -25,6 +25,33 @@ export type TransactionUnit = {
   latest_qa_result?: string | null;
 };
 
+export type QcSerialStatus = {
+  product_unit_id: number;
+  serial_number: string;
+  unit_status: string;
+  inspection_id?: number | null;
+  inspection_no?: number | null;
+  template_id?: number | null;
+  template_name?: string | null;
+  qc_status: 'NOT_STARTED' | 'DRAFT' | 'SUBMITTED' | 'REVIEWED' | 'APPROVED' | 'REJECTED' | 'EDIT_REQUESTED';
+  overall_result?: 'PASS' | 'FAIL' | 'N/A' | null;
+  updated_at?: string | null;
+};
+
+export type QcLotInspectionStatus = {
+  lot: TransactionLot;
+  summary: {
+    not_started: number;
+    draft: number;
+    submitted: number;
+    reviewed: number;
+    approved: number;
+    rejected: number;
+    edit_requested: number;
+  };
+  serials: QcSerialStatus[];
+};
+
 export type TransactionTemplate = {
   id: number;
   model_id: number;
@@ -64,6 +91,41 @@ export type QcItemPayload = {
   remark?: string | null;
 };
 
+export type ApprovedResultEditItemPayload = {
+  detail_id: number;
+  measured_value?: number | null;
+  measured_text?: string | null;
+  remark?: string | null;
+};
+
+export type ApprovedResultEditPayload = {
+  reason: string;
+  items: ApprovedResultEditItemPayload[];
+};
+
+export type EditHistoryRow = {
+  id: number;
+  source_type: 'QC' | 'QA' | string;
+  source_id: number;
+  detail_id?: number | null;
+  template_item_id?: number | null;
+  item_code?: string | null;
+  item_name?: string | null;
+  old_measured_value?: number | string | null;
+  new_measured_value?: number | string | null;
+  old_measured_text?: string | null;
+  new_measured_text?: string | null;
+  old_result?: string | null;
+  new_result?: string | null;
+  old_overall_result?: string | null;
+  new_overall_result?: string | null;
+  edit_reason?: string | null;
+  edit_by?: number | null;
+  edit_by_username?: string | null;
+  edit_at?: string | null;
+  approval_status: 'REQUESTED' | 'APPLIED' | 'APPROVED' | 'REJECTED' | string;
+};
+
 export type QcInspectionPayload = {
   product_unit_id: number;
   template_id: number;
@@ -96,10 +158,15 @@ export type QcInspection = {
     item_code: string;
     item_name: string;
     check_type: string;
+    spec_min?: number | string | null;
+    spec_max?: number | string | null;
+    unit?: string | null;
+    mandatory?: boolean | null;
     result: string;
   }>;
   equipment: Array<{ equipment_id: number; equipment_code: string; equipment_name: string; status: string; calibration_due_date?: string | null }>;
   approval_logs: Array<Record<string, string | number | null>>;
+  edit_history?: EditHistoryRow[];
 };
 
 export type EquipmentCheck = {
@@ -132,6 +199,9 @@ export const qcApi = {
   async getLotUnits(lotId: string | number) {
     return (await httpClient.get<TransactionUnit[]>(`/qc/lots/${lotId}/units`)).data;
   },
+  async getLotInspectionStatus(lotId: string | number) {
+    return (await httpClient.get<QcLotInspectionStatus>(`/qc/lots/${lotId}/inspection-status`)).data;
+  },
   async getTemplatesByModel(modelId: string | number) {
     return (await httpClient.get<TransactionTemplate[]>(`/qc/models/${modelId}/templates`)).data;
   },
@@ -161,5 +231,14 @@ export const qcApi = {
   },
   async reject(id: string | number, remark: string) {
     return (await httpClient.post<QcInspection>(`/qc/inspections/${id}/reject`, { remark })).data;
+  },
+  async requestEditInspection(id: string | number, payload: { reason: string }) {
+    return (await httpClient.post<QcInspection>(`/qc/inspections/${id}/edit-request`, payload)).data;
+  },
+  async applyEditInspection(id: string | number, payload: ApprovedResultEditPayload) {
+    return (await httpClient.post<QcInspection>(`/qc/inspections/${id}/apply-edit`, payload)).data;
+  },
+  async getInspectionEditHistory(id: string | number) {
+    return (await httpClient.get<EditHistoryRow[]>(`/qc/inspections/${id}/edit-history`)).data;
   },
 };

@@ -4,9 +4,9 @@ function executor(client) {
   return client || pool;
 }
 
-async function findQaLots({ search } = {}) {
+async function findQaLots({ search, model_code, lot_number, status, date_from, date_to } = {}) {
   const values = [];
-  const where = [`pl.status <> 'CANCELLED'`];
+  const where = status ? [] : [`pl.status <> 'CANCELLED'`];
 
   if (search) {
     values.push(`%${search}%`);
@@ -15,6 +15,31 @@ async function findQaLots({ search } = {}) {
       OR pm.model_code ILIKE $${values.length}
       OR pm.product_name ILIKE $${values.length}
     )`);
+  }
+
+  if (model_code) {
+    values.push(`%${model_code}%`);
+    where.push(`pm.model_code ILIKE $${values.length}`);
+  }
+
+  if (lot_number) {
+    values.push(`%${lot_number}%`);
+    where.push(`pl.lot_number ILIKE $${values.length}`);
+  }
+
+  if (status) {
+    values.push(status);
+    where.push(`pl.status = $${values.length}`);
+  }
+
+  if (date_from) {
+    values.push(date_from);
+    where.push(`pl.production_date >= $${values.length}`);
+  }
+
+  if (date_to) {
+    values.push(date_to);
+    where.push(`pl.production_date <= $${values.length}`);
   }
 
   const result = await pool.query(
@@ -33,12 +58,58 @@ async function findQaLots({ search } = {}) {
       FROM production_lot pl
       JOIN product_model pm ON pm.id = pl.model_id
       LEFT JOIN product_unit pu ON pu.lot_id = pl.id
-      WHERE ${where.join(' AND ')}
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       GROUP BY pl.id, pm.id
       ORDER BY pl.production_date DESC NULLS LAST, pl.created_at DESC, pl.id DESC
       LIMIT 100
     `,
     values
+  );
+
+  return result.rows;
+}
+
+async function findLotSamplingStatus(lotId) {
+  const result = await pool.query(
+    `
+      SELECT
+        pu.id AS product_unit_id,
+        pu.lot_id,
+        pu.model_id,
+        pu.serial_number,
+        pu.product_status AS unit_status,
+        latest.qa_sampling_id,
+        latest.sampling_no,
+        latest.template_id,
+        latest.template_name,
+        latest.revision,
+        COALESCE(latest.qa_status, 'NOT_STARTED') AS qa_status,
+        latest.unit_result,
+        latest.overall_result,
+        latest.updated_at
+      FROM product_unit pu
+      LEFT JOIN LATERAL (
+        SELECT
+          qsh.id AS qa_sampling_id,
+          qsh.sampling_round AS sampling_no,
+          qsh.template_id,
+          tt.template_name,
+          tt.revision,
+          qsh.status AS qa_status,
+          qsh.overall_result,
+          qsu.unit_result,
+          GREATEST(qsh.updated_at, qsu.updated_at) AS updated_at
+        FROM qa_sample_unit qsu
+        JOIN qa_sampling_header qsh ON qsh.id = qsu.qa_sampling_id
+        JOIN test_template tt ON tt.id = qsh.template_id
+        WHERE qsu.product_unit_id = pu.id
+        ORDER BY qsh.updated_at DESC, qsh.id DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE pu.lot_id = $1
+      ORDER BY pu.serial_number ASC
+    `,
+    [lotId]
   );
 
   return result.rows;
@@ -879,6 +950,7 @@ module.exports = {
   findQaLots,
   findLotById,
   findLotUnits,
+  findLotSamplingStatus,
   findQaTemplatesByModelId,
   findTemplateById,
   findQaTemplateItems,

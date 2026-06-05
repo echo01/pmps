@@ -6,10 +6,11 @@ import { ResultDraft, ResultInputCell } from './ResultInputCell';
 type Props = {
   items: TemplateItem[];
   values: Record<number, ResultDraft>;
+  readOnly?: boolean;
   onChange: (itemId: number, value: ResultDraft) => void;
 };
 
-export function ResultGrid({ items, values, onChange }: Props) {
+export function ResultGrid({ items, values, readOnly, onChange }: Props) {
   return (
     <div className="tableScroll">
       <table>
@@ -36,10 +37,11 @@ export function ResultGrid({ items, values, onChange }: Props) {
                 </td>
                 <td>{item.check_type}</td>
                 <td>{item.spec_min ?? '-'} - {item.spec_max ?? '-'} {item.unit || ''}</td>
-                <td><ResultInputCell item={item} value={value} onChange={(next) => onChange(item.id, next)} /></td>
+                <td><ResultInputCell item={item} value={value} readOnly={readOnly} onChange={(next) => onChange(item.id, next)} /></td>
                 <td><StatusBadge value={preview} /></td>
                 <td>
                   <input
+                    disabled={readOnly}
                     value={value.remark}
                     placeholder="Remark"
                     onChange={(event) => onChange(item.id, { ...value, remark: event.target.value })}

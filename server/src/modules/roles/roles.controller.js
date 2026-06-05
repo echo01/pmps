@@ -3,6 +3,7 @@ const {
   getRoleById,
   createNewRole,
   updateExistingRole,
+  listPermissions,
   getRolePermissions,
   replaceRolePermissions,
 } = require('./roles.service');
@@ -110,6 +111,21 @@ async function putRole(req, res, next) {
   }
 }
 
+async function getPermissions(req, res, next) {
+  try {
+    const permissions = await listPermissions({
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Permissions retrieved successfully',
+      data: permissions,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 async function getPermissionsByRole(req, res, next) {
   try {
     const permissions = await getRolePermissions({
@@ -149,6 +165,7 @@ module.exports = {
   getRole,
   postRole,
   putRole,
+  getPermissions,
   getPermissionsByRole,
   putPermissionsByRole,
 };
