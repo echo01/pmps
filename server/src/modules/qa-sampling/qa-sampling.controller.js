@@ -10,6 +10,7 @@ const {
 } = require('./qa-sampling.schema');
 const {
   listQaLots,
+  getQaLotSamplingStatus: getQaLotSamplingStatusService,
   listQaLotUnits,
   listQaTemplatesByModel,
   getQaTemplateItems: getQaTemplateItemsService,
@@ -29,13 +30,36 @@ const {
 async function getQaLots(req, res, next) {
   try {
     const lots = await listQaLots({
-      search: req.query.search,
+      filters: {
+        search: req.query.search,
+        model_code: req.query.model_code,
+        lot_number: req.query.lot_number,
+        status: req.query.status,
+        date_from: req.query.date_from,
+        date_to: req.query.date_to,
+      },
       requestId: req.requestId,
     });
 
     return successResponse(res, {
       message: 'QA lots retrieved successfully',
       data: lots,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getQaLotSamplingStatus(req, res, next) {
+  try {
+    const status = await getQaLotSamplingStatusService({
+      lotId: parsePositiveInt(req.params.lotId, 'lotId'),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QA lot sampling status retrieved successfully',
+      data: status,
     });
   } catch (error) {
     return next(error);
@@ -282,6 +306,7 @@ async function getQaSamplingEditHistory(req, res, next) {
 
 module.exports = {
   getQaLots,
+  getQaLotSamplingStatus,
   getQaLotUnits,
   getQaTemplates,
   getQaTemplateItems,

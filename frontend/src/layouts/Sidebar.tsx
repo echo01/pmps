@@ -1,4 +1,4 @@
-import { BarChart3, Boxes, ClipboardCheck, ClipboardList, Factory, Gauge, PackageSearch, Ruler, ShieldCheck, Wrench } from 'lucide-react';
+import { BarChart3, Boxes, ClipboardCheck, ClipboardList, Factory, Gauge, PackageSearch, Ruler, ShieldCheck, UserCog, UserRound, UsersRound, Wrench } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { can } from '../auth/permission';
@@ -16,6 +16,9 @@ const menu = [
   { to: '/qc/inspection', label: 'QC Inspection', icon: ClipboardCheck, permission: 'QCInspection' },
   { to: '/qa/sampling', label: 'QA Sampling', icon: ShieldCheck, permission: 'QASampling' },
   { to: '/reports', label: 'Reports', icon: ClipboardList, permission: 'SearchReport' },
+  { to: '/admin/users', label: 'Users', icon: UsersRound, permission: 'UserRole' },
+  { to: '/admin/roles', label: 'Roles', icon: UserCog, permission: 'UserRole' },
+  { to: '/profile', label: 'My Profile', icon: UserRound },
 ];
 
 export function Sidebar() {
@@ -33,7 +36,7 @@ export function Sidebar() {
 
       <nav className="navMenu">
         {menu
-          .filter((item) => can(item.permission, user?.permissions || []))
+          .filter((item) => !item.permission || can(item.permission, user?.permissions || []))
           .map((item) => {
             const Icon = item.icon;
             return (

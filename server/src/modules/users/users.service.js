@@ -11,6 +11,7 @@ const {
   updateUserPassword,
   findRolesByUserId,
   countRolesByIds,
+  findRoleAccessByIds,
   deleteUserRoles,
   insertUserRoles,
 } = require('./users.repository');
@@ -152,13 +153,44 @@ async function updateExistingUser({ id, payload, requestId }) {
   return user;
 }
 
-async function setUserActive({ id, active, requestId }) {
+function ensureNotSelfLock(id, active, actorUserId) {
+  if (actorUserId && Number(id) === Number(actorUserId) && active === false) {
+    throw conflict('Cannot lock your own account', [
+      {
+        field: 'active',
+        message: 'current user cannot deactivate their own account',
+      },
+    ]);
+  }
+}
+
+function ensureKeepsSelfManagementAccess(id, actorUserId, roleAccessRows) {
+  if (!actorUserId || Number(id) !== Number(actorUserId)) {
+    return;
+  }
+
+  const hasManagementAccess = roleAccessRows.some(
+    (row) => row.role_code === 'ADMIN' || row.permission_code === 'UserRole'
+  );
+
+  if (!hasManagementAccess) {
+    throw conflict('Cannot remove your own user management access', [
+      {
+        field: 'role_ids',
+        message: 'selected roles must keep ADMIN or UserRole access for current user',
+      },
+    ]);
+  }
+}
+
+async function setUserActive({ id, active, actorUserId, requestId }) {
   console.info('[USERS][ACTIVE][START]', {
     requestId,
     userId: id,
     active,
   });
 
+  ensureNotSelfLock(id, active, actorUserId);
   await getUserById({ id, requestId });
 
   const user = await updateUserActive(id, active);
@@ -170,6 +202,23 @@ async function setUserActive({ id, active, requestId }) {
   });
 
   return user;
+}
+
+async function lockUser({ id, actorUserId, requestId }) {
+  return setUserActive({
+    id,
+    active: false,
+    actorUserId,
+    requestId,
+  });
+}
+
+async function unlockUser({ id, requestId }) {
+  return setUserActive({
+    id,
+    active: true,
+    requestId,
+  });
 }
 
 async function setUserPassword({ id, password, requestId }) {
@@ -209,7 +258,7 @@ async function getUserRoles({ id, requestId }) {
   return roles;
 }
 
-async function replaceUserRoles({ id, roleIds, requestId }) {
+async function replaceUserRoles({ id, roleIds, actorUserId, requestId }) {
   const uniqueRoleIds = uniqueIds(roleIds);
 
   console.info('[USERS][ROLES_REPLACE][START]', {
@@ -237,6 +286,9 @@ async function replaceUserRoles({ id, roleIds, requestId }) {
         ]);
       }
 
+      const roleAccessRows = await findRoleAccessByIds(uniqueRoleIds, client);
+      ensureKeepsSelfManagementAccess(id, actorUserId, roleAccessRows);
+
       await deleteUserRoles(id, client);
       await insertUserRoles(id, uniqueRoleIds, client);
 
@@ -263,6 +315,8 @@ module.exports = {
   createNewUser,
   updateExistingUser,
   setUserActive,
+  lockUser,
+  unlockUser,
   setUserPassword,
   getUserRoles,
   replaceUserRoles,

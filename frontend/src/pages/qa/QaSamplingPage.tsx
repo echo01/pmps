@@ -4,10 +4,17 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { qaApi, QaSamplingPayload } from '../../api/qa.api';
 import { TemplateItem, TransactionLot, TransactionUnit } from '../../api/qc.api';
+import { useAuth } from '../../auth/useAuth';
+import { can } from '../../auth/permission';
 import { StatusBadge } from '../../components/badges/StatusBadge';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorAlert } from '../../components/common/ErrorAlert';
 import { LoadingPanel } from '../../components/common/LoadingPanel';
+import { ApplyEditPanel } from '../../components/edit-result/ApplyEditPanel';
+import { EditHistoryPanel, latestEditReason } from '../../components/edit-result/EditHistoryPanel';
+import { EditRequestModal } from '../../components/edit-result/EditRequestModal';
+import { EditStatusBanner } from '../../components/edit-result/EditStatusBanner';
+import { EditResultDetail } from '../../components/edit-result/editResultTypes';
 import { ApprovalActions } from '../../components/transaction/ApprovalActions';
 import { EquipmentCheckPanel } from '../../components/transaction/EquipmentCheckPanel';
 import { EquipmentSelector } from '../../components/transaction/EquipmentSelector';
@@ -45,16 +52,22 @@ export function QaSamplingPage() {
   const { qaSamplingId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const permissions = user?.permissions || [];
+  const canEditResult = can('EditTestResult', permissions);
+  const canViewEditHistory = can('SearchReport', permissions);
   const [search, setSearch] = useState('');
   const [selectedLot, setSelectedLot] = useState<TransactionLot | null>(null);
   const [sampleUnits, setSampleUnits] = useState<TransactionUnit[]>([]);
   const [templateId, setTemplateId] = useState('');
   const [equipmentIds, setEquipmentIds] = useState<number[]>([]);
+  const [equipmentRequired, setEquipmentRequired] = useState(true);
   const [drafts, setDrafts] = useState<SampleDrafts>({});
   const [samplingNo, setSamplingNo] = useState('1');
   const [samplingMethod, setSamplingMethod] = useState('MANUAL');
   const [stationName, setStationName] = useState('QA-STATION-01');
   const [remark, setRemark] = useState('');
+  const [editRequestOpen, setEditRequestOpen] = useState(false);
 
   const detail = useQuery({
     queryKey: ['qa-sampling', qaSamplingId],
@@ -92,6 +105,12 @@ export function QaSamplingPage() {
     queryKey: ['qa-equipment-check', qaSamplingId],
     queryFn: () => qaApi.checkEquipment(qaSamplingId || ''),
     enabled: false,
+  });
+
+  const editHistory = useQuery({
+    queryKey: ['qa-sampling-edit-history', qaSamplingId],
+    queryFn: () => qaApi.getSamplingEditHistory(qaSamplingId || ''),
+    enabled: Boolean(qaSamplingId) && canViewEditHistory,
   });
 
   useEffect(() => {
@@ -148,6 +167,14 @@ export function QaSamplingPage() {
     });
     return calculateOverallResult(unitResults);
   }, [drafts, items.data, sampleUnits]);
+  const status = detail.data?.status || 'NEW';
+  const readOnly = Boolean(qaSamplingId) && !['DRAFT'].includes(status);
+  const selectedEditHistory = editHistory.data || detail.data?.edit_history || [];
+  const editDetails: EditResultDetail[] = (detail.data?.sample_units || []).flatMap((unit) => unit.details.map((row) => ({
+    ...row,
+    sample_label: `${unit.sample_no}. ${unit.serial_number}`,
+    serial_number: unit.serial_number,
+  })));
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -176,6 +203,23 @@ export function QaSamplingPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['qa-sampling', qaSamplingId] });
       equipmentCheck.refetch();
+    },
+  });
+
+  const requestEditMutation = useMutation({
+    mutationFn: (reason: string) => qaApi.requestEditSampling(qaSamplingId || '', { reason }),
+    onSuccess: () => {
+      setEditRequestOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['qa-sampling', qaSamplingId] });
+      queryClient.invalidateQueries({ queryKey: ['qa-sampling-edit-history', qaSamplingId] });
+    },
+  });
+
+  const applyEditMutation = useMutation({
+    mutationFn: (payload: Parameters<typeof qaApi.applyEditSampling>[1]) => qaApi.applyEditSampling(qaSamplingId || '', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['qa-sampling', qaSamplingId] });
+      queryClient.invalidateQueries({ queryKey: ['qa-sampling-edit-history', qaSamplingId] });
     },
   });
 
@@ -214,6 +258,7 @@ export function QaSamplingPage() {
       {detail.error ? <ErrorAlert error={detail.error} /> : null}
       {saveMutation.error ? <ErrorAlert error={saveMutation.error} title="Unable to save QA draft" /> : null}
       {workflowMutation.error ? <ErrorAlert error={workflowMutation.error} title="Unable to update workflow" /> : null}
+      {requestEditMutation.error ? <ErrorAlert error={requestEditMutation.error} title="Unable to request edit" /> : null}
 
       <section className="panel">
         <h2>Select Lot</h2>
@@ -232,13 +277,13 @@ export function QaSamplingPage() {
       <section className="panel">
         <h2>Samples and Template</h2>
         <div className="formGrid">
-          <label>Template<select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+          <label>Template<select disabled={readOnly} value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
             <option value="">Select QA template</option>{templates.data?.map((template) => <option key={template.id} value={template.id}>{template.template_name} rev {template.revision || '-'}</option>)}
           </select></label>
-          <label>Sampling No<input value={samplingNo} onChange={(event) => setSamplingNo(event.target.value)} /></label>
-          <label>Method<input value={samplingMethod} onChange={(event) => setSamplingMethod(event.target.value)} /></label>
-          <label>Station<input value={stationName} onChange={(event) => setStationName(event.target.value)} /></label>
-          <label className="span2">Remark<input value={remark} onChange={(event) => setRemark(event.target.value)} /></label>
+          <label>Sampling No<input disabled={readOnly} value={samplingNo} onChange={(event) => setSamplingNo(event.target.value)} /></label>
+          <label>Method<input disabled={readOnly} value={samplingMethod} onChange={(event) => setSamplingMethod(event.target.value)} /></label>
+          <label>Station<input disabled={readOnly} value={stationName} onChange={(event) => setStationName(event.target.value)} /></label>
+          <label className="span2">Remark<input disabled={readOnly} value={remark} onChange={(event) => setRemark(event.target.value)} /></label>
         </div>
         <div className="tableScroll subPanel">
           <table>
@@ -248,8 +293,9 @@ export function QaSamplingPage() {
         </div>
       </section>
 
-      <section className="panel"><h2>Equipment</h2><EquipmentSelector modelId={selectedLot?.model_id} selectedIds={equipmentIds} onChange={setEquipmentIds} /></section>
+      <section className="panel"><h2>Equipment</h2><EquipmentSelector modelId={selectedLot?.model_id} selectedIds={equipmentIds} onChange={readOnly ? () => undefined : setEquipmentIds} onRequirementChange={setEquipmentRequired} /></section>
       <section className="panel"><h2>Equipment Check</h2><EquipmentCheckPanel check={equipmentCheck.data || null} /></section>
+      <EditStatusBanner status={status} latestReason={latestEditReason(selectedEditHistory)} />
 
       <form className="pageStack" onSubmit={submit}>
         <section className="panel">
@@ -259,17 +305,21 @@ export function QaSamplingPage() {
           {sampleUnits.map((unit) => (
             <div className="sampleGrid" key={unit.id}>
               <h2>{unit.serial_number} <StatusBadge value={calculateOverallResult((items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[unit.id]?.[item.id] || emptyDraft()) })))} /></h2>
-              <ResultGrid items={items.data || []} values={drafts[unit.id] || {}} onChange={(itemId, value) => setDrafts({ ...drafts, [unit.id]: { ...(drafts[unit.id] || {}), [itemId]: value } })} />
+              <ResultGrid readOnly={readOnly} items={items.data || []} values={drafts[unit.id] || {}} onChange={(itemId, value) => setDrafts({ ...drafts, [unit.id]: { ...(drafts[unit.id] || {}), [itemId]: value } })} />
             </div>
           ))}
         </section>
         <div className="formActions">
-          <button className="primaryButton" disabled={saveMutation.isPending || !selectedLot || !templateId || !equipmentIds.length || !sampleUnits.length || !items.data?.length} type="submit"><Save size={16} /> Save Draft</button>
+          {!readOnly ? <button className="primaryButton" disabled={saveMutation.isPending || !selectedLot || !templateId || (equipmentRequired && !equipmentIds.length) || !sampleUnits.length || !items.data?.length} type="submit"><Save size={16} /> Save Draft</button> : null}
           {qaSamplingId ? <button className="textButton" type="button" onClick={() => equipmentCheck.refetch()}>Run Equipment Check</button> : null}
+          {qaSamplingId && status === 'APPROVED' && canEditResult ? <button className="primaryButton" type="button" onClick={() => setEditRequestOpen(true)}>Request Edit</button> : null}
         </div>
       </form>
 
       {qaSamplingId ? <section className="panel"><ApprovalActions status={detail.data?.status} busy={workflowMutation.isPending} onSubmit={(workflowRemark) => workflowMutation.mutate({ action: 'submit', workflowRemark })} onReview={(workflowRemark) => workflowMutation.mutate({ action: 'review', workflowRemark })} onApprove={(workflowRemark) => workflowMutation.mutate({ action: 'approve', workflowRemark })} onReject={(workflowRemark) => workflowMutation.mutate({ action: 'reject', workflowRemark })} /></section> : null}
+      {qaSamplingId && status === 'EDIT_REQUESTED' && canEditResult ? <ApplyEditPanel sourceLabel="QA sampling" details={editDetails} templates={items.data || []} busy={applyEditMutation.isPending} error={applyEditMutation.error} onApply={(payload) => applyEditMutation.mutate(payload)} /> : null}
+      {qaSamplingId && canViewEditHistory ? <EditHistoryPanel rows={selectedEditHistory} /> : null}
+      <EditRequestModal open={editRequestOpen} busy={requestEditMutation.isPending} error={requestEditMutation.error} onClose={() => setEditRequestOpen(false)} onSubmit={(reason) => requestEditMutation.mutate(reason)} />
     </div>
   );
 }

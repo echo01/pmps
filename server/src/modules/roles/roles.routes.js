@@ -5,6 +5,7 @@ const {
   getRole,
   postRole,
   putRole,
+  getPermissions,
   getPermissionsByRole,
   putPermissionsByRole,
 } = require('./roles.controller');
@@ -33,6 +34,13 @@ router.post(
   authMiddleware,
   requirePermission('UserRole'),
   postRole
+);
+
+router.get(
+  '/permissions',
+  authMiddleware,
+  requirePermission('UserRole'),
+  getPermissions
 );
 
 router.put(

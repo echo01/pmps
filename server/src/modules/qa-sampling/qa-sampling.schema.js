@@ -51,7 +51,7 @@ const saveQaSamplingSchema = z
     sampling_no: z.coerce.number().int().positive(),
     sampling_method: z.string().trim().max(50).optional().default('MANUAL'),
     station_name: z.string().trim().min(1).max(100),
-    equipment_ids: z.array(z.coerce.number().int().positive()).min(1),
+    equipment_ids: z.array(z.coerce.number().int().positive()),
     sample_units: z.array(sampleUnitSchema).min(1),
     remark: z.string().max(1000).optional().nullable(),
   })
@@ -61,7 +61,7 @@ const updateQaSamplingSchema = z
   .object({
     sampling_method: z.string().trim().max(50).optional(),
     station_name: z.string().trim().min(1).max(100).optional(),
-    equipment_ids: z.array(z.coerce.number().int().positive()).min(1).optional(),
+    equipment_ids: z.array(z.coerce.number().int().positive()).optional(),
     sample_units: z.array(sampleUnitSchema).min(1).optional(),
     remark: z.string().max(1000).optional().nullable(),
   })

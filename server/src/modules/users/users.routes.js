@@ -6,6 +6,8 @@ const {
   postUser,
   putUser,
   patchUserActive,
+  postUserLock,
+  postUserUnlock,
   postUserPassword,
   getRolesByUser,
   putRolesByUser,
@@ -23,6 +25,8 @@ router.post('/users', postUser);
 router.get('/users/:id', getUser);
 router.put('/users/:id', putUser);
 router.patch('/users/:id/active', patchUserActive);
+router.post('/users/:id/lock', postUserLock);
+router.post('/users/:id/unlock', postUserUnlock);
 router.post('/users/:id/password', postUserPassword);
 router.get('/users/:id/roles', getRolesByUser);
 router.put('/users/:id/roles', putRolesByUser);

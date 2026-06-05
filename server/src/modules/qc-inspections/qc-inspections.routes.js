@@ -4,6 +4,7 @@ const { authMiddleware } = require('../../middlewares/auth.middleware');
 const { requirePermission } = require('../../middlewares/rbac.middleware');
 const {
   getQcLots,
+  getQcLotInspectionStatus,
   getQcLotUnits,
   getQcTemplates,
   getQcTemplateItems,
@@ -26,6 +27,7 @@ const editResultAccess = [authMiddleware, requirePermission('EditTestResult')];
 const editHistoryAccess = [authMiddleware, requirePermission('SearchReport')];
 
 router.get('/qc/lots', qcAccess, getQcLots);
+router.get('/qc/lots/:lotId/inspection-status', qcAccess, getQcLotInspectionStatus);
 router.get('/qc/lots/:lotId/units', qcAccess, getQcLotUnits);
 router.get('/qc/models/:modelId/templates', qcAccess, getQcTemplates);
 router.get('/qc/templates/:templateId/items', qcAccess, getQcTemplateItems);

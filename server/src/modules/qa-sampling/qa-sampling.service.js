@@ -192,9 +192,52 @@ function assertEquipmentValid(validation) {
   }
 }
 
-async function listQaLots({ search, requestId }) {
-  console.info('[QA][LOTS][LIST]', { requestId, search });
-  return repository.findQaLots({ search });
+async function listQaLots({ filters = {}, requestId }) {
+  console.info('[QA][LOTS][LIST]', { requestId, filters });
+  return repository.findQaLots(filters);
+}
+
+function buildQaSummary(samples) {
+  const summary = {
+    not_started: 0,
+    draft: 0,
+    submitted: 0,
+    reviewed: 0,
+    approved: 0,
+    rejected: 0,
+    edit_requested: 0,
+  };
+
+  for (const sample of samples) {
+    const key = String(sample.qa_status || 'NOT_STARTED').toLowerCase();
+
+    if (Object.prototype.hasOwnProperty.call(summary, key)) {
+      summary[key] += 1;
+    }
+  }
+
+  return summary;
+}
+
+async function getQaLotSamplingStatus({ lotId, requestId }) {
+  console.info('[QA][LOTS][SAMPLING_STATUS]', { requestId, lotId });
+
+  const lot = await repository.findLotById(lotId);
+
+  if (!lot) {
+    throw notFound('Production lot not found');
+  }
+
+  const samples = await repository.findLotSamplingStatus(lotId);
+
+  return {
+    lot: {
+      ...lot,
+      serial_count: samples.length,
+    },
+    summary: buildQaSummary(samples),
+    samples,
+  };
 }
 
 async function listQaLotUnits({ lotId, requestId }) {
@@ -837,6 +880,7 @@ async function getQaSamplingEditHistory({ id, requestId }) {
 
 module.exports = {
   listQaLots,
+  getQaLotSamplingStatus,
   listQaLotUnits,
   listQaTemplatesByModel,
   getQaTemplateItems,

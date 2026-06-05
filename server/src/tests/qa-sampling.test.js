@@ -407,6 +407,18 @@ describe('Sprint 6 QA Sampling integration', () => {
     assert.equal(items.body.data[0].items.length, 2);
   });
 
+  it('lists QA lot sampling status with NOT_STARTED rows', async () => {
+    const response = await request('GET', `/api/qa/lots/${state.lotId}/sampling-status`, {
+      token: adminToken,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.lot.id, state.lotId);
+    assert.equal(response.body.data.samples.length, 3);
+    assert.equal(response.body.data.summary.not_started, 3);
+    assert.ok(response.body.data.samples.every((row) => row.qa_status === 'NOT_STARTED'));
+  });
+
   it('creates QA sampling with sample units, details, equipment, and PASS overall result', async () => {
     const response = await request('POST', '/api/qa/samplings', {
       token: adminToken,
@@ -420,6 +432,22 @@ describe('Sprint 6 QA Sampling integration', () => {
     assert.equal(response.body.data.equipment.length, 1);
     assert.ok(response.body.data.sample_units.every((unit) => unit.unit_result === 'PASS'));
     state.qaSamplingId = response.body.data.id;
+  });
+
+  it('updates QA lot sampling status table after draft creation', async () => {
+    const response = await request('GET', `/api/qa/lots/${state.lotId}/sampling-status`, {
+      token: adminToken,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.samples.length, 3);
+    assert.equal(response.body.data.summary.draft, 2);
+    assert.equal(response.body.data.summary.not_started, 1);
+
+    const sampledRows = response.body.data.samples.filter((row) => row.qa_sampling_id === state.qaSamplingId);
+    assert.equal(sampledRows.length, 2);
+    assert.ok(sampledRows.every((row) => row.qa_status === 'DRAFT'));
+    assert.ok(sampledRows.every((row) => row.unit_result === 'PASS'));
   });
 
   it('duplicate QA sampling returns 409', async () => {

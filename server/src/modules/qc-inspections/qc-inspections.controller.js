@@ -11,6 +11,7 @@ const {
 const {
   listQcLots,
   listQcLotUnits,
+  getQcLotInspectionStatus: getQcLotInspectionStatusService,
   listQcTemplatesByModel,
   getQcTemplateItems: getQcTemplateItemsService,
   createQcInspection,
@@ -29,13 +30,36 @@ const {
 async function getQcLots(req, res, next) {
   try {
     const lots = await listQcLots({
-      search: req.query.search,
+      filters: {
+        search: req.query.search,
+        model_code: req.query.model_code,
+        lot_number: req.query.lot_number,
+        status: req.query.status,
+        date_from: req.query.date_from,
+        date_to: req.query.date_to,
+      },
       requestId: req.requestId,
     });
 
     return successResponse(res, {
       message: 'QC lots retrieved successfully',
       data: lots,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getQcLotInspectionStatus(req, res, next) {
+  try {
+    const result = await getQcLotInspectionStatusService({
+      lotId: parsePositiveInt(req.params.lotId, 'lotId'),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'QC lot inspection status retrieved successfully',
+      data: result,
     });
   } catch (error) {
     return next(error);
@@ -282,6 +306,7 @@ async function getQcInspectionEditHistory(req, res, next) {
 
 module.exports = {
   getQcLots,
+  getQcLotInspectionStatus,
   getQcLotUnits,
   getQcTemplates,
   getQcTemplateItems,

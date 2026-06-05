@@ -244,6 +244,8 @@ async function updateUserActive(id, active) {
       UPDATE app_user
       SET
         active = $2,
+        failed_login_count = CASE WHEN $2 = true THEN 0 ELSE failed_login_count END,
+        locked_until = CASE WHEN $2 = true THEN NULL ELSE locked_until END,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING
@@ -335,6 +337,31 @@ async function countRolesByIds(roleIds, client) {
   return result.rows[0].count;
 }
 
+async function findRoleAccessByIds(roleIds, client) {
+  if (!roleIds.length) {
+    return [];
+  }
+
+  const db = getExecutor(client);
+  const result = await db.query(
+    `
+      SELECT
+        r.id AS role_id,
+        r.role_code,
+        p.permission_code
+      FROM app_role r
+      LEFT JOIN app_role_permission rp
+        ON rp.role_id = r.id
+      LEFT JOIN app_permission p
+        ON p.id = rp.permission_id
+      WHERE r.id = ANY($1::int[])
+    `,
+    [roleIds]
+  );
+
+  return result.rows;
+}
+
 async function deleteUserRoles(userId, client) {
   const db = getExecutor(client);
   await db.query(
@@ -373,6 +400,7 @@ module.exports = {
   updateUserPassword,
   findRolesByUserId,
   countRolesByIds,
+  findRoleAccessByIds,
   deleteUserRoles,
   insertUserRoles,
 };

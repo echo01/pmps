@@ -4,6 +4,7 @@ const { authMiddleware } = require('../../middlewares/auth.middleware');
 const { requirePermission } = require('../../middlewares/rbac.middleware');
 const {
   getQaLots,
+  getQaLotSamplingStatus,
   getQaLotUnits,
   getQaTemplates,
   getQaTemplateItems,
@@ -26,6 +27,7 @@ const editResultAccess = [authMiddleware, requirePermission('EditTestResult')];
 const editHistoryAccess = [authMiddleware, requirePermission('SearchReport')];
 
 router.get('/qa/lots', qaAccess, getQaLots);
+router.get('/qa/lots/:lotId/sampling-status', qaAccess, getQaLotSamplingStatus);
 router.get('/qa/lots/:lotId/units', qaAccess, getQaLotUnits);
 router.get('/qa/models/:modelId/templates', qaAccess, getQaTemplates);
 router.get('/qa/templates/:templateId/items', qaAccess, getQaTemplateItems);
