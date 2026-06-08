@@ -12,6 +12,21 @@ function uniqueNumbers(values) {
   return [...new Set(values)];
 }
 
+function minimumSampleQty(lotQty) {
+  return Math.max(1, Math.ceil(Number(lotQty || 0) * 0.1));
+}
+
+function samplingProgress(lotQty, selectedQty) {
+  const total = Number(lotQty || 0);
+  const selected = Number(selectedQty || 0);
+
+  return {
+    minimum_sample_qty: minimumSampleQty(total),
+    selected_sample_qty: selected,
+    sampling_percent: total ? Math.round((selected / total) * 10000) / 100 : 0,
+  };
+}
+
 function groupTemplateItems(items) {
   const sections = new Map();
 
@@ -74,11 +89,13 @@ async function assertTemplateUsable(templateId, modelId) {
     ]);
   }
 
-  if (template.model_id !== modelId) {
+  const assigned = await repository.isTemplateAssignedToModel(templateId, modelId);
+
+  if (!assigned) {
     throw validationError('Validation failed', [
       {
         field: 'template_id',
-        message: 'Template model does not match lot model',
+        message: 'Template is not assigned to lot model',
       },
     ]);
   }
@@ -151,6 +168,84 @@ function normalizeSampleUnits(payloadUnits, templateItems, lotUnits) {
       details,
     };
   });
+}
+
+function resolveBySerialItems(payloadItems, templateItems) {
+  const codeToItems = new Map();
+
+  for (const item of templateItems) {
+    const code = String(item.item_code || '').trim().toUpperCase();
+    if (!code) continue;
+    if (!codeToItems.has(code)) codeToItems.set(code, []);
+    codeToItems.get(code).push(item);
+  }
+
+  const resolved = payloadItems.map((payloadItem) => {
+    if (payloadItem.template_item_id) {
+      if (payloadItem.item_code) {
+        const matchingItem = templateItems.find((item) => item.id === payloadItem.template_item_id);
+        if (matchingItem && String(matchingItem.item_code || '').trim().toUpperCase() !== String(payloadItem.item_code).trim().toUpperCase()) {
+          throw validationError('Validation failed', [
+            {
+              field: 'items',
+              message: `item_code ${payloadItem.item_code} does not match template_item_id ${payloadItem.template_item_id}`,
+            },
+          ]);
+        }
+      }
+      return payloadItem;
+    }
+
+    const matches = codeToItems.get(String(payloadItem.item_code || '').trim().toUpperCase()) || [];
+    if (!matches.length) {
+      throw validationError('Validation failed', [
+        {
+          field: 'items',
+          message: `Template item code not found in template: ${payloadItem.item_code}`,
+        },
+      ]);
+    }
+    if (matches.length > 1) {
+      throw validationError('Validation failed', [
+        {
+          field: 'items',
+          message: `Template item code is duplicated in template: ${payloadItem.item_code}`,
+        },
+      ]);
+    }
+
+    return {
+      template_item_id: matches[0].id,
+      measured_value: payloadItem.measured_value ?? null,
+      measured_text: payloadItem.measured_text || null,
+      remark: payloadItem.remark || null,
+    };
+  });
+
+  const ids = resolved.map((item) => item.template_item_id);
+  if (new Set(ids).size !== ids.length) {
+    throw validationError('Validation failed', [
+      {
+        field: 'items',
+        message: 'template_item_id or item_code must not resolve to duplicated template item',
+      },
+    ]);
+  }
+
+  return resolved;
+}
+
+function samplingUnitToPayload(unit) {
+  return {
+    product_unit_id: unit.product_unit_id,
+    remark: unit.remark || null,
+    items: unit.details.map((detail) => ({
+      template_item_id: detail.template_item_id,
+      measured_value: detail.measured_value === null ? null : Number(detail.measured_value),
+      measured_text: detail.measured_text,
+      remark: detail.remark,
+    })),
+  };
 }
 
 async function buildEquipmentValidation({ modelId, equipmentIds, requestId }) {
@@ -229,11 +324,23 @@ async function getQaLotSamplingStatus({ lotId, requestId }) {
   }
 
   const samples = await repository.findLotSamplingStatus(lotId);
+  const latestSample = samples
+    .filter((sample) => sample.qa_sampling_id)
+    .sort((left, right) => {
+      const timeDifference = new Date(right.updated_at || 0).getTime() - new Date(left.updated_at || 0).getTime();
+      return timeDifference || Number(right.qa_sampling_id) - Number(left.qa_sampling_id);
+    })[0];
+  const selectedSampleQty = latestSample
+    ? samples.filter((sample) => sample.qa_sampling_id === latestSample.qa_sampling_id).length
+    : 0;
 
   return {
     lot: {
       ...lot,
       serial_count: samples.length,
+      qa_sampling_id: latestSample?.qa_sampling_id || null,
+      sampling_status: latestSample?.qa_status || 'NOT_STARTED',
+      ...samplingProgress(lot.lot_qty, selectedSampleQty),
     },
     summary: buildQaSummary(samples),
     samples,
@@ -409,6 +516,128 @@ async function createQaSampling({ payload, userId, requestId }) {
   return getQaSampling({ id: result.id, requestId });
 }
 
+async function createQaSamplingBySerial({ payload, userId, requestId }) {
+  console.info('[QA][SAVE_BY_SERIAL][START]', {
+    requestId,
+    lot_number: payload.lot_number,
+    serial_number: payload.serial_number,
+    template_id: payload.template_id || null,
+    sampling_no: payload.sampling_no || null,
+  });
+
+  const unit = await repository.findProductUnitContextByLotAndSerial(
+    payload.lot_number,
+    payload.serial_number
+  );
+
+  if (!unit) {
+    throw validationError('Validation failed', [
+      {
+        field: 'serial_number',
+        message: 'Serial number was not found in the specified lot',
+      },
+    ]);
+  }
+
+  let templateId = payload.template_id || null;
+  if (!templateId) {
+    const templates = await repository.findQaTemplatesByModelId(unit.model_id);
+    templateId = templates[0]?.id || null;
+    if (!templateId) {
+      throw validationError('Validation failed', [
+        {
+          field: 'template_id',
+          message: 'No active QA template is assigned to this model',
+        },
+      ]);
+    }
+  }
+
+  await assertTemplateUsable(templateId, unit.model_id);
+  const templateItems = await repository.findQaTemplateItems(templateId);
+  const resolvedItems = resolveBySerialItems(payload.items, templateItems);
+
+  let existing = null;
+  if (payload.sampling_no) {
+    existing = await repository.findQaSamplingByLotTemplateNo(
+      unit.lot_id,
+      templateId,
+      payload.sampling_no
+    );
+  } else {
+    existing = await repository.findLatestDraftSampling(unit.lot_id, templateId);
+  }
+
+  if (existing && existing.status !== 'DRAFT') {
+    throw conflict('QA sampling round already exists and is not DRAFT');
+  }
+
+  if (existing) {
+    const current = await getQaSampling({ id: existing.id, requestId });
+    const sampleUnits = current.sample_units
+      .filter((sampleUnit) => sampleUnit.product_unit_id !== unit.id)
+      .map(samplingUnitToPayload);
+    sampleUnits.push({
+      product_unit_id: unit.id,
+      remark: payload.sample_remark || null,
+      items: resolvedItems,
+    });
+
+    const updated = await updateQaSampling({
+      id: existing.id,
+      payload: {
+        sampling_method: payload.sampling_method || current.sampling_method || 'MANUAL',
+        station_name: payload.station_name,
+        equipment_ids: payload.equipment_ids ?? current.equipment.map((row) => row.equipment_id),
+        sample_units: sampleUnits,
+        remark: Object.prototype.hasOwnProperty.call(payload, 'remark')
+          ? payload.remark
+          : current.remark,
+      },
+      requestId,
+    });
+
+    console.info('[QA][SAVE_BY_SERIAL][UPDATED]', {
+      requestId,
+      qaSamplingId: updated.id,
+      product_unit_id: unit.id,
+      selected_sample_qty: updated.selected_sample_qty,
+    });
+    return updated;
+  }
+
+  const samplingNo = payload.sampling_no
+    || await repository.findNextSamplingNo(unit.lot_id, templateId);
+  const created = await createQaSampling({
+    payload: {
+      lot_id: unit.lot_id,
+      template_id: templateId,
+      sampling_no: samplingNo,
+      sampling_method: payload.sampling_method || 'MANUAL',
+      station_name: payload.station_name,
+      equipment_ids: payload.equipment_ids || [],
+      sample_units: [
+        {
+          product_unit_id: unit.id,
+          remark: payload.sample_remark || null,
+          items: resolvedItems,
+        },
+      ],
+      remark: payload.remark,
+    },
+    userId,
+    requestId,
+  });
+
+  console.info('[QA][SAVE_BY_SERIAL][CREATED]', {
+    requestId,
+    qaSamplingId: created.id,
+    product_unit_id: unit.id,
+    sampling_no: samplingNo,
+  });
+  return created;
+}
+
 async function getQaSampling({ id, requestId }) {
   console.info('[QA][GET]', { requestId, id });
 
@@ -436,6 +665,7 @@ async function getQaSampling({ id, requestId }) {
 
   return {
     ...header,
+    ...samplingProgress(header.lot_qty, sampleUnits.length),
     sample_units: sampleUnits.map((unit) => ({
       ...unit,
       details: detailsByUnitId.get(unit.id) || [],
@@ -562,6 +792,26 @@ async function workflowTransition({ id, userId, remark, action, fromStatuses, to
 
   if (!fromStatuses.includes(sampling.status)) {
     throw conflict(`QA sampling must be ${fromStatuses.join(' or ')}`);
+  }
+
+  if (action === 'SUBMIT' && sampling.overall_result === 'N/A') {
+    throw unprocessable('QA sampling cannot be submitted until every test item has a result', [
+      {
+        field: 'overall_result',
+        message: 'Complete every test item before submitting QA sampling',
+      },
+    ]);
+  }
+
+  const requiredSampleQty = minimumSampleQty(sampling.lot_qty);
+
+  if (action === 'SUBMIT' && Number(sampling.sample_qty || 0) < requiredSampleQty) {
+    throw unprocessable(`QA sampling requires at least ${requiredSampleQty} sample(s), equal to 10% of the lot rounded up`, [
+      {
+        field: 'sample_qty',
+        message: `Select at least ${requiredSampleQty} sample(s) from lot size ${sampling.lot_qty}`,
+      },
+    ]);
   }
 
   if (action === 'SUBMIT' || action === 'APPROVE') {
@@ -885,6 +1135,7 @@ module.exports = {
   listQaTemplatesByModel,
   getQaTemplateItems,
   createQaSampling,
+  createQaSamplingBySerial,
   updateQaSampling,
   getQaSampling,
   checkQaSamplingEquipment,

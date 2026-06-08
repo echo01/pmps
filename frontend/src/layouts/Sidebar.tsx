@@ -1,10 +1,12 @@
-import { BarChart3, Boxes, ClipboardCheck, ClipboardList, Factory, Gauge, PackageSearch, Ruler, ShieldCheck, UserCog, UserRound, UsersRound, Wrench } from 'lucide-react';
+import { BarChart3, Boxes, CalendarClock, ClipboardCheck, ClipboardList, Factory, Gauge, PackageSearch, Ruler, ShieldCheck, UserCog, UserRound, UsersRound, Wrench } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
-import { can } from '../auth/permission';
+import { can, canAny } from '../auth/permission';
 
 const menu = [
   { to: '/dashboard', label: 'Dashboard', icon: Gauge, permission: 'SearchReport' },
+  { to: '/production-lots', label: 'Production Lots', icon: Factory, permission: 'ProductionLot' },
+  { to: '/dashboard/planning', label: 'Lot Planning', icon: CalendarClock, permissions: ['PlanningView', 'SearchReport'] },
   { to: '/products/categories', label: 'Product Categories', icon: PackageSearch, permission: 'ProductMaster' },
   { to: '/products/sub-categories', label: 'Sub Categories', icon: PackageSearch, permission: 'ProductMaster' },
   { to: '/products/models', label: 'Product Models', icon: Boxes, permission: 'ProductMaster' },
@@ -12,7 +14,6 @@ const menu = [
   { to: '/equipment/master', label: 'Equipment Master', icon: Wrench, permission: 'EquipmentMaster' },
   { to: '/equipment/model-required', label: 'Required Equipment', icon: Ruler, permission: 'ModelRequiredEquipment' },
   { to: '/templates', label: 'Test Templates', icon: ClipboardList, permission: 'TestTemplate' },
-  { to: '/production-lots', label: 'Production Lots', icon: Factory, permission: 'ProductionLot' },
   { to: '/qc/inspection', label: 'QC Inspection', icon: ClipboardCheck, permission: 'QCInspection' },
   { to: '/qa/sampling', label: 'QA Sampling', icon: ShieldCheck, permission: 'QASampling' },
   { to: '/reports', label: 'Reports', icon: ClipboardList, permission: 'SearchReport' },
@@ -36,7 +37,10 @@ export function Sidebar() {
 
       <nav className="navMenu">
         {menu
-          .filter((item) => !item.permission || can(item.permission, user?.permissions || []))
+          .filter((item) => {
+            if (item.permissions) return canAny(item.permissions, user?.permissions || []);
+            return !item.permission || can(item.permission, user?.permissions || []);
+          })
           .map((item) => {
             const Icon = item.icon;
             return (

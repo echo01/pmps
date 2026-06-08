@@ -45,6 +45,43 @@ async function countRows(sql, values) {
   return Number(result.rows[0]?.total || 0);
 }
 
+function reportLotStatusExpression(lotAlias = 'pl') {
+  return `
+    CASE
+      WHEN ${lotAlias}.status = 'COMPLETED'
+      THEN 'READY'
+      WHEN ${lotAlias}.status = 'OPEN'
+        AND EXISTS (
+          SELECT 1
+          FROM product_unit ready_unit
+          WHERE ready_unit.lot_id = ${lotAlias}.id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM product_unit pending_unit
+          LEFT JOIN LATERAL (
+            SELECT ih.status
+            FROM inspection_header ih
+            WHERE ih.product_unit_id = pending_unit.id
+            ORDER BY ih.inspection_datetime DESC, ih.id DESC
+            LIMIT 1
+          ) latest_qc ON true
+          WHERE pending_unit.lot_id = ${lotAlias}.id
+            AND COALESCE(latest_qc.status, 'NOT_STARTED') <> 'APPROVED'
+        )
+        AND COALESCE((
+          SELECT qsh.status
+          FROM qa_sampling_header qsh
+          WHERE qsh.lot_id = ${lotAlias}.id
+          ORDER BY qsh.updated_at DESC, qsh.id DESC
+          LIMIT 1
+        ), 'NOT_STARTED') = 'APPROVED'
+      THEN 'READY'
+      ELSE ${lotAlias}.status
+    END
+  `;
+}
+
 async function getDashboardSummary() {
   const [production, qc, qa] = await Promise.all([
     pool.query(`
@@ -206,6 +243,7 @@ async function getLotStatusSummary() {
 function lotReportWhere(filters = {}) {
   const values = [];
   const where = ['1 = 1'];
+  const reportLotStatus = reportLotStatusExpression();
 
   addSearchFilter({
     values,
@@ -215,7 +253,7 @@ function lotReportWhere(filters = {}) {
   });
   addLikeFilter({ values, where, column: 'pm.model_code', value: filters.model_code });
   addLikeFilter({ values, where, column: 'pl.lot_number', value: filters.lot_number });
-  addEqualFilter({ values, where, column: 'pl.status', value: filters.status });
+  addEqualFilter({ values, where, column: `(${reportLotStatus})`, value: filters.status });
   addDateRangeFilter({ values, where, column: 'pl.production_date', filters });
 
   return { values, whereSql: where.join(' AND ') };
@@ -223,6 +261,7 @@ function lotReportWhere(filters = {}) {
 
 async function findLotReports(filters, pagination) {
   const { values, whereSql } = lotReportWhere(filters);
+  const reportLotStatus = reportLotStatusExpression();
   values.push(pagination.limit, pagination.offset);
 
   const result = await pool.query(
@@ -236,14 +275,15 @@ async function findLotReports(filters, pagination) {
         pl.lot_qty,
         COUNT(DISTINCT pu.id)::int AS serial_count,
         COUNT(DISTINCT ih.id)::int AS qc_count,
-        COUNT(DISTINCT qsh.id)::int AS qa_sampling_count,
-        pl.status AS lot_status,
+        COUNT(DISTINCT qsu.product_unit_id)::int AS qa_sampling_count,
+        (${reportLotStatus}) AS lot_status,
         pl.production_date
       FROM production_lot pl
       JOIN product_model pm ON pm.id = pl.model_id
       LEFT JOIN product_unit pu ON pu.lot_id = pl.id
       LEFT JOIN inspection_header ih ON ih.product_unit_id = pu.id
       LEFT JOIN qa_sampling_header qsh ON qsh.lot_id = pl.id
+      LEFT JOIN qa_sample_unit qsu ON qsu.qa_sampling_id = qsh.id
       WHERE ${whereSql}
       GROUP BY pl.id, pm.id
       ORDER BY pl.production_date DESC NULLS LAST, pl.id DESC
@@ -500,6 +540,7 @@ async function countQaSamplingReports(filters) {
 }
 
 async function getLotReportDetail(lotId) {
+  const reportLotStatus = reportLotStatusExpression();
   const [lot, serials, qcSummary, qaSummary, approvalStatus] = await Promise.all([
     pool.query(
       `
@@ -510,7 +551,7 @@ async function getLotReportDetail(lotId) {
           pm.model_code,
           pm.product_name,
           pl.lot_qty,
-          pl.status AS lot_status,
+          (${reportLotStatus}) AS lot_status,
           pl.production_date,
           pl.remark,
           pl.created_at,
@@ -570,12 +611,25 @@ async function getLotReportDetail(lotId) {
       `
         SELECT
           COUNT(*)::int AS total,
-          COUNT(*) FILTER (WHERE overall_result = 'PASS')::int AS pass,
-          COUNT(*) FILTER (WHERE overall_result = 'FAIL')::int AS fail,
-          COUNT(*) FILTER (WHERE overall_result = 'N/A')::int AS na,
+          COUNT(*) FILTER (WHERE unit_result = 'PASS')::int AS pass,
+          COUNT(*) FILTER (WHERE unit_result = 'FAIL')::int AS fail,
+          COUNT(*) FILTER (WHERE unit_result = 'N/A' OR unit_result IS NULL)::int AS na,
           COUNT(*) FILTER (WHERE status = 'APPROVED')::int AS approved
-        FROM qa_sampling_header
-        WHERE lot_id = $1
+        FROM (
+          SELECT DISTINCT ON (qsu.product_unit_id)
+            qsu.product_unit_id,
+            qsu.unit_result,
+            qsh.status
+          FROM qa_sample_unit qsu
+          JOIN qa_sampling_header qsh ON qsh.id = qsu.qa_sampling_id
+          WHERE qsh.lot_id = $1
+          ORDER BY
+            qsu.product_unit_id,
+            qsh.updated_at DESC,
+            qsh.id DESC,
+            qsu.updated_at DESC,
+            qsu.id DESC
+        ) latest_qa
       `,
       [lotId]
     ),

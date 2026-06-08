@@ -193,7 +193,7 @@ export function TemplateDetailPage() {
       </div>
       <section className="panel">
         <dl className="kvGrid">
-          <div><dt>Model</dt><dd>{template.data.model_code}</dd></div>
+          <div><dt>Assigned Models</dt><dd>{template.data.model_codes?.length ? template.data.model_codes.join(', ') : 'Not assigned'}</dd></div>
           <div><dt>Type</dt><dd><TemplateTypeBadge value={template.data.template_type} /></dd></div>
           <div><dt>Revision</dt><dd>{template.data.revision}</dd></div>
           <div><dt>Active</dt><dd><BooleanBadge value={template.data.active} /></dd></div>

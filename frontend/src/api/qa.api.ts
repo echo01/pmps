@@ -37,6 +37,9 @@ export type QaSampling = {
   station_name: string;
   status: string;
   overall_result: string;
+  minimum_sample_qty: number;
+  selected_sample_qty: number;
+  sampling_percent: number;
   remark?: string | null;
   lot_number: string;
   model_id: number;
@@ -87,7 +90,13 @@ export type QaSampleStatus = {
 };
 
 export type QaLotSamplingStatus = {
-  lot: TransactionLot;
+  lot: TransactionLot & {
+    qa_sampling_id?: number | null;
+    sampling_status: string;
+    minimum_sample_qty: number;
+    selected_sample_qty: number;
+    sampling_percent: number;
+  };
   summary: {
     not_started: number;
     draft: number;
@@ -100,9 +109,18 @@ export type QaLotSamplingStatus = {
   samples: QaSampleStatus[];
 };
 
+export type QaLotSearchRow = TransactionLot & {
+  production_lot_status: string;
+  qa_sampling_id?: number | null;
+  sampling_status: string;
+  sample_qty?: number | null;
+  sampling_result?: string | null;
+  sampling_updated_at?: string | null;
+};
+
 export const qaApi = {
   async getLots(params: Record<string, QueryValue> = {}) {
-    return (await httpClient.get<TransactionLot[]>(`/qa/lots${toQueryString(params)}`)).data;
+    return (await httpClient.get<QaLotSearchRow[]>(`/qa/lots${toQueryString(params)}`)).data;
   },
   async getLotUnits(lotId: string | number) {
     return (await httpClient.get<TransactionUnit[]>(`/qa/lots/${lotId}/units`)).data;

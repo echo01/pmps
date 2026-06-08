@@ -32,4 +32,38 @@ function requirePermission(permissionCode) {
   };
 }
 
-module.exports = { requirePermission };
+function requireAnyPermission(permissionCodes) {
+  return function rbacAnyMiddleware(req, res, next) {
+    const user = req.user;
+
+    if (!user) {
+      return next(forbidden('User context is missing'));
+    }
+
+    const isAdmin = user.roles.includes('ADMIN');
+    const hasPermission = permissionCodes.some((permissionCode) =>
+      user.permissions.includes(permissionCode)
+    );
+
+    if (!isAdmin && !hasPermission) {
+      console.warn('[RBAC][DENIED]', {
+        requestId: req.requestId,
+        userId: user.id,
+        requiredPermissions: permissionCodes,
+        userPermissions: user.permissions,
+      });
+
+      return next(forbidden('Permission denied'));
+    }
+
+    console.info('[RBAC][ALLOWED]', {
+      requestId: req.requestId,
+      userId: user.id,
+      requiredPermissions: permissionCodes,
+    });
+
+    return next();
+  };
+}
+
+module.exports = { requirePermission, requireAnyPermission };

@@ -20,7 +20,7 @@ import { EquipmentCheckPanel } from '../../components/transaction/EquipmentCheck
 import { EquipmentSelector } from '../../components/transaction/EquipmentSelector';
 import { ResultDraft } from '../../components/transaction/ResultInputCell';
 import { ResultGrid } from '../../components/transaction/ResultGrid';
-import { calculateOverallResult, calculatePreviewResult, normalizeMeasuredText, normalizeMeasuredValue } from '../../utils/resultPreview';
+import { calculateCompleteOverallResult, calculatePreviewResult, normalizeMeasuredText, normalizeMeasuredValue } from '../../utils/resultPreview';
 import { logger } from '../../utils/logger';
 
 type SampleDrafts = Record<number, Record<number, ResultDraft>>;
@@ -163,9 +163,9 @@ export function QaSamplingPage() {
   const overallPreview = useMemo(() => {
     const unitResults = sampleUnits.map((unit) => {
       const rowResults = (items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[unit.id]?.[item.id] || emptyDraft()) }));
-      return calculateOverallResult(rowResults);
+      return calculateCompleteOverallResult(rowResults);
     });
-    return calculateOverallResult(unitResults);
+    return calculateCompleteOverallResult(unitResults);
   }, [drafts, items.data, sampleUnits]);
   const status = detail.data?.status || 'NEW';
   const readOnly = Boolean(qaSamplingId) && !['DRAFT'].includes(status);
@@ -304,7 +304,7 @@ export function QaSamplingPage() {
           {!sampleUnits.length || !items.data?.length ? <EmptyState message="Select samples and a template to enter results" /> : null}
           {sampleUnits.map((unit) => (
             <div className="sampleGrid" key={unit.id}>
-              <h2>{unit.serial_number} <StatusBadge value={calculateOverallResult((items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[unit.id]?.[item.id] || emptyDraft()) })))} /></h2>
+              <h2>{unit.serial_number} <StatusBadge value={calculateCompleteOverallResult((items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[unit.id]?.[item.id] || emptyDraft()) })))} /></h2>
               <ResultGrid readOnly={readOnly} items={items.data || []} values={drafts[unit.id] || {}} onChange={(itemId, value) => setDrafts({ ...drafts, [unit.id]: { ...(drafts[unit.id] || {}), [itemId]: value } })} />
             </div>
           ))}

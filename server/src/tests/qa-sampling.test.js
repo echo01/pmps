@@ -28,6 +28,8 @@ const state = {
   booleanItemId: null,
   lotId: null,
   productUnitIds: [],
+  samplingRuleLotId: null,
+  samplingRuleUnitIds: [],
   qaSamplingId: null,
 };
 
@@ -58,20 +60,24 @@ async function login(username, password) {
   });
 }
 
-function sampleUnits(overrides = {}) {
-  return state.productUnitIds.map((productUnitId) => ({
+function sampleUnitsFor(productUnitIds, overrides = {}) {
+  return productUnitIds.map((productUnitId) => ({
     product_unit_id: productUnitId,
     items: [
       {
         template_item_id: state.numericItemId,
-        measured_value: overrides.failFirstUnit && productUnitId === state.productUnitIds[0] ? 9999 : 230,
+        measured_value: overrides.failFirstUnit && productUnitId === productUnitIds[0] ? 9999 : 230,
       },
       {
         template_item_id: state.booleanItemId,
-        measured_text: 'OK',
+        measured_text: overrides.incomplete ? null : 'OK',
       },
     ],
   }));
+}
+
+function sampleUnits(overrides = {}) {
+  return sampleUnitsFor(state.productUnitIds, overrides);
 }
 
 function qaPayload(overrides = {}) {
@@ -251,6 +257,31 @@ describe('Sprint 6 QA Sampling integration', () => {
     assert.equal(units.status, 200);
     assert.equal(units.body.data.length, 3);
     state.productUnitIds = units.body.data.slice(0, 2).map((unit) => unit.id);
+
+    const samplingRuleLot = await request('POST', '/api/production-lots', {
+      token: adminToken,
+      body: {
+        model_id: state.modelId,
+        lot_number: `S6-LOT-${codeSuffix}-RULE`,
+        production_date: '2026-06-04',
+        lot_qty: 20,
+        serial_generation: {
+          prefix: `S6${codeSuffix}-R-`,
+          start_number: 1,
+          count: 20,
+          padding: 3,
+        },
+      },
+    });
+    assert.equal(samplingRuleLot.status, 201);
+    state.samplingRuleLotId = samplingRuleLot.body.data.lot.id;
+
+    const samplingRuleUnits = await request('GET', `/api/qa/lots/${state.samplingRuleLotId}/units`, {
+      token: adminToken,
+    });
+    assert.equal(samplingRuleUnits.status, 200);
+    assert.equal(samplingRuleUnits.body.data.length, 20);
+    state.samplingRuleUnitIds = samplingRuleUnits.body.data.map((unit) => unit.id);
   });
 
   after(async () => {
@@ -378,6 +409,8 @@ describe('Sprint 6 QA Sampling integration', () => {
     assert.equal(lots.status, 200);
     assert.ok(lots.body.data.some((row) => row.id === state.lotId));
     assert.equal(lots.body.data.find((row) => row.id === state.lotId).serial_count, 3);
+    assert.equal(lots.body.data.find((row) => row.id === state.lotId).production_lot_status, 'OPEN');
+    assert.equal(lots.body.data.find((row) => row.id === state.lotId).sampling_status, 'NOT_STARTED');
 
     const units = await request('GET', `/api/qa/lots/${state.lotId}/units`, {
       token: adminToken,
@@ -416,6 +449,10 @@ describe('Sprint 6 QA Sampling integration', () => {
     assert.equal(response.body.data.lot.id, state.lotId);
     assert.equal(response.body.data.samples.length, 3);
     assert.equal(response.body.data.summary.not_started, 3);
+    assert.equal(response.body.data.lot.minimum_sample_qty, 1);
+    assert.equal(response.body.data.lot.selected_sample_qty, 0);
+    assert.equal(response.body.data.lot.sampling_percent, 0);
+    assert.equal(response.body.data.lot.sampling_status, 'NOT_STARTED');
     assert.ok(response.body.data.samples.every((row) => row.qa_status === 'NOT_STARTED'));
   });
 
@@ -458,6 +495,45 @@ describe('Sprint 6 QA Sampling integration', () => {
 
     assert.equal(response.status, 409);
     assert.equal(response.body.error_code, 'CONFLICT');
+  });
+
+  it('keeps QA result N/A until every test item is completed and blocks submit', async () => {
+    const incomplete = await request('PUT', `/api/qa/samplings/${state.qaSamplingId}`, {
+      token: adminToken,
+      body: {
+        equipment_ids: [state.equipmentId],
+        sample_units: sampleUnits({ incomplete: true }),
+        remark: 'Incomplete QA test items',
+      },
+    });
+
+    assert.equal(incomplete.status, 200);
+    assert.equal(incomplete.body.data.status, 'DRAFT');
+    assert.equal(incomplete.body.data.overall_result, 'N/A');
+    assert.ok(incomplete.body.data.sample_units.every((unit) => unit.unit_result === 'N/A'));
+
+    const blocked = await request('POST', `/api/qa/samplings/${state.qaSamplingId}/submit`, {
+      token: adminToken,
+      body: {
+        remark: 'Incomplete QA sampling must not submit',
+      },
+    });
+
+    assert.equal(blocked.status, 422);
+    assert.equal(blocked.body.error_code, 'BUSINESS_VALIDATION_FAILED');
+
+    const completed = await request('PUT', `/api/qa/samplings/${state.qaSamplingId}`, {
+      token: adminToken,
+      body: {
+        equipment_ids: [state.equipmentId],
+        sample_units: sampleUnits(),
+        remark: 'Complete every QA test item',
+      },
+    });
+
+    assert.equal(completed.status, 200);
+    assert.equal(completed.body.data.overall_result, 'PASS');
+    assert.ok(completed.body.data.sample_units.every((unit) => unit.unit_result === 'PASS'));
   });
 
   it('retrieves, equipment-checks, and updates draft QA sampling to FAIL', async () => {
@@ -534,6 +610,190 @@ describe('Sprint 6 QA Sampling integration', () => {
     assert.equal(approved.body.data.status, 'APPROVED');
     assert.ok(approved.body.data.approved_at);
     assert.ok(approved.body.data.approval_logs.some((row) => row.action === 'APPROVE'));
+  });
+
+  it('requires 10 percent rounded up, allows extra samples, and approves without testing every lot unit', async () => {
+    const statusBefore = await request('GET', `/api/qa/lots/${state.samplingRuleLotId}/sampling-status`, {
+      token: adminToken,
+    });
+
+    assert.equal(statusBefore.status, 200);
+    assert.equal(statusBefore.body.data.lot.lot_qty, 20);
+    assert.equal(statusBefore.body.data.lot.minimum_sample_qty, 2);
+
+    const created = await request('POST', '/api/qa/samplings', {
+      token: adminToken,
+      body: qaPayload({
+        lot_id: state.samplingRuleLotId,
+        sampling_no: 1,
+        sample_units: sampleUnitsFor(state.samplingRuleUnitIds.slice(0, 1)),
+      }),
+    });
+
+    assert.equal(created.status, 201);
+    assert.equal(created.body.data.minimum_sample_qty, 2);
+    assert.equal(created.body.data.selected_sample_qty, 1);
+
+    const belowMinimum = await request('POST', `/api/qa/samplings/${created.body.data.id}/submit`, {
+      token: adminToken,
+      body: {
+        remark: 'One of twenty is below the ten percent minimum',
+      },
+    });
+
+    assert.equal(belowMinimum.status, 422);
+    assert.equal(belowMinimum.body.error_code, 'BUSINESS_VALIDATION_FAILED');
+    assert.ok(belowMinimum.body.errors.some((error) => error.field === 'sample_qty'));
+
+    const updated = await request('PUT', `/api/qa/samplings/${created.body.data.id}`, {
+      token: adminToken,
+      body: {
+        equipment_ids: [state.equipmentId],
+        sample_units: sampleUnitsFor(state.samplingRuleUnitIds.slice(0, 3)),
+      },
+    });
+
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.data.minimum_sample_qty, 2);
+    assert.equal(updated.body.data.selected_sample_qty, 3);
+    assert.equal(updated.body.data.sampling_percent, 15);
+
+    const submitted = await request('POST', `/api/qa/samplings/${created.body.data.id}/submit`, {
+      token: adminToken,
+      body: {
+        remark: 'Submit fifteen percent sample',
+      },
+    });
+    assert.equal(submitted.status, 200);
+    assert.equal(submitted.body.data.status, 'SUBMITTED');
+
+    const reviewed = await request('POST', `/api/qa/samplings/${created.body.data.id}/review`, {
+      token: adminToken,
+      body: {
+        remark: 'Review selected samples',
+      },
+    });
+    assert.equal(reviewed.status, 200);
+    assert.equal(reviewed.body.data.status, 'REVIEWED');
+
+    const approved = await request('POST', `/api/qa/samplings/${created.body.data.id}/approve`, {
+      token: adminToken,
+      body: {
+        remark: 'Approve lot sampling',
+      },
+    });
+    assert.equal(approved.status, 200);
+    assert.equal(approved.body.data.status, 'APPROVED');
+    assert.equal(approved.body.data.sample_units.length, 3);
+
+    const statusAfter = await request('GET', `/api/qa/lots/${state.samplingRuleLotId}/sampling-status`, {
+      token: adminToken,
+    });
+    assert.equal(statusAfter.status, 200);
+    assert.equal(statusAfter.body.data.summary.approved, 3);
+    assert.equal(statusAfter.body.data.summary.not_started, 17);
+    assert.equal(statusAfter.body.data.lot.qa_sampling_id, created.body.data.id);
+    assert.equal(statusAfter.body.data.lot.sampling_status, 'APPROVED');
+    assert.equal(statusAfter.body.data.lot.selected_sample_qty, 3);
+    assert.equal(statusAfter.body.data.lot.sampling_percent, 15);
+
+    await pool.query(
+      `
+        UPDATE qa_sampling_header
+        SET sample_qty = 1
+        WHERE id = $1
+      `,
+      [created.body.data.id]
+    );
+
+    const approvedLots = await request(
+      'GET',
+      `/api/qa/lots?status=APPROVED&lot_number=${encodeURIComponent(`S6-LOT-${codeSuffix}-RULE`)}`,
+      { token: adminToken }
+    );
+    assert.equal(approvedLots.status, 200);
+    assert.equal(approvedLots.body.data.length, 1);
+    assert.equal(approvedLots.body.data[0].id, state.samplingRuleLotId);
+    assert.equal(approvedLots.body.data[0].production_lot_status, 'OPEN');
+    assert.equal(approvedLots.body.data[0].sampling_status, 'APPROVED');
+    assert.equal(approvedLots.body.data[0].sample_qty, 3);
+    assert.equal(approvedLots.body.data[0].sampling_result, 'PASS');
+
+    const secondRound = await request('POST', '/api/qa/samplings', {
+      token: adminToken,
+      body: qaPayload({
+        lot_id: state.samplingRuleLotId,
+        sampling_no: 2,
+        sample_units: sampleUnitsFor(state.samplingRuleUnitIds.slice(3, 5)),
+      }),
+    });
+    assert.equal(secondRound.status, 201);
+
+    for (const action of ['submit', 'review', 'approve']) {
+      const response = await request('POST', `/api/qa/samplings/${secondRound.body.data.id}/${action}`, {
+        token: adminToken,
+        body: {
+          remark: `${action} second sampling round`,
+        },
+      });
+      assert.equal(response.status, 200);
+    }
+
+    const cumulativeLots = await request(
+      'GET',
+      `/api/qa/lots?status=APPROVED&lot_number=${encodeURIComponent(`S6-LOT-${codeSuffix}-RULE`)}`,
+      { token: adminToken }
+    );
+    assert.equal(cumulativeLots.status, 200);
+    assert.equal(cumulativeLots.body.data[0].sample_qty, 5);
+  });
+
+  it('saves multiple QA sample results by lot_number, serial_number, and item_code into one draft', async () => {
+    const units = await request('GET', `/api/qa/lots/${state.samplingRuleLotId}/units`, {
+      token: adminToken,
+    });
+    assert.equal(units.status, 200);
+
+    const serials = units.body.data.slice(5, 7);
+    const makeBody = (serialNumber, voltage) => ({
+      lot_number: `S6-LOT-${codeSuffix}-RULE`,
+      serial_number: serialNumber,
+      sampling_no: 99,
+      station_name: 'QA-STATION-API',
+      equipment_ids: [state.equipmentId],
+      items: [
+        {
+          item_code: 'QA_VOLTAGE',
+          measured_value: voltage,
+        },
+        {
+          item_code: 'QA_LED',
+          measured_text: 'PASS',
+        },
+      ],
+    });
+
+    const first = await request('POST', '/api/qa/samplings/by-serial', {
+      token: adminToken,
+      body: makeBody(serials[0].serial_number, 230),
+    });
+    assert.equal(first.status, 201);
+    assert.equal(first.body.data.status, 'DRAFT');
+    assert.equal(first.body.data.sampling_round, 99);
+    assert.equal(first.body.data.selected_sample_qty, 1);
+
+    const second = await request('POST', '/api/qa/samplings/by-serial', {
+      token: adminToken,
+      body: makeBody(serials[1].serial_number, 231),
+    });
+    assert.equal(second.status, 201);
+    assert.equal(second.body.data.id, first.body.data.id);
+    assert.equal(second.body.data.selected_sample_qty, 2);
+    assert.equal(second.body.data.overall_result, 'PASS');
+    assert.deepEqual(
+      second.body.data.sample_units.map((unit) => unit.serial_number).sort(),
+      serials.map((unit) => unit.serial_number).sort()
+    );
   });
 
   it('expired equipment blocks submit', async () => {

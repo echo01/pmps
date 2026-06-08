@@ -13,6 +13,7 @@ const {
   generateSerialPreview,
   createProductionLot,
   updateProductionLot,
+  deleteProductionLot,
   getProductionLotSerials: getProductionLotSerialsService,
   replaceLotEcnRefs,
   listCurrentLots,
@@ -102,6 +103,22 @@ async function putProductionLot(req, res, next) {
   }
 }
 
+async function deleteProductionLotById(req, res, next) {
+  try {
+    const deleted = await deleteProductionLot({
+      id: parsePositiveInt(req.params.id, 'id'),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Production lot and related records deleted successfully',
+      data: deleted,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 async function getProductionLotSerials(req, res, next) {
   try {
     const serials = await getProductionLotSerialsService({
@@ -172,6 +189,7 @@ module.exports = {
   postProductionLot,
   getProductionLotById,
   putProductionLot,
+  deleteProductionLotById,
   getProductionLotSerials,
   postGenerateSerials,
   postLotEcnRefs,

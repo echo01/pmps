@@ -44,6 +44,7 @@ export function ReportFilters({ activeTab, filters, onChange, onSubmit }: Report
         <select value={filters.status} onChange={(event) => setField('status', event.target.value)}>
           <option value="">All</option>
           <option value="OPEN">OPEN</option>
+          {activeTab === 'lots' ? <option value="READY">READY</option> : null}
           <option value="HOLD">HOLD</option>
           <option value="CLOSED">CLOSED</option>
           <option value="DRAFT">DRAFT</option>

@@ -7,6 +7,7 @@ const {
   postProductionLot,
   getProductionLotById,
   putProductionLot,
+  deleteProductionLotById,
   getProductionLotSerials,
   postGenerateSerials,
   postLotEcnRefs,
@@ -23,6 +24,7 @@ router.get('/production-lots', productionLotAccess, getProductionLots);
 router.post('/production-lots', productionLotAccess, postProductionLot);
 router.get('/production-lots/:id', productionLotAccess, getProductionLotById);
 router.put('/production-lots/:id', productionLotAccess, putProductionLot);
+router.delete('/production-lots/:id', productionLotAccess, deleteProductionLotById);
 router.get('/production-lots/:id/serials', productionLotAccess, getProductionLotSerials);
 router.post('/production-lots/:id/ecn', productionLotAccess, postLotEcnRefs);
 

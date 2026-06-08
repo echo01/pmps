@@ -6,7 +6,7 @@ function executor(client) {
 
 async function findQaLots({ search, model_code, lot_number, status, date_from, date_to } = {}) {
   const values = [];
-  const where = status ? [] : [`pl.status <> 'CANCELLED'`];
+  const where = [`pl.status <> 'CANCELLED'`];
 
   if (search) {
     values.push(`%${search}%`);
@@ -29,7 +29,7 @@ async function findQaLots({ search, model_code, lot_number, status, date_from, d
 
   if (status) {
     values.push(status);
-    where.push(`pl.status = $${values.length}`);
+    where.push(`COALESCE(latest_sampling.status, 'NOT_STARTED') = $${values.length}`);
   }
 
   if (date_from) {
@@ -52,14 +52,37 @@ async function findQaLots({ search, model_code, lot_number, status, date_from, d
         pm.product_name,
         pl.lot_qty,
         COUNT(pu.id)::int AS serial_count,
-        pl.status,
+        pl.status AS production_lot_status,
+        latest_sampling.id AS qa_sampling_id,
+        COALESCE(latest_sampling.status, 'NOT_STARTED') AS sampling_status,
+        COALESCE(sample_progress.sample_qty, 0)::int AS sample_qty,
+        latest_sampling.overall_result AS sampling_result,
+        latest_sampling.updated_at AS sampling_updated_at,
         pl.production_date,
         pl.created_at
       FROM production_lot pl
       JOIN product_model pm ON pm.id = pl.model_id
       LEFT JOIN product_unit pu ON pu.lot_id = pl.id
+      LEFT JOIN LATERAL (
+        SELECT
+          qsh.id,
+          qsh.status,
+          qsh.overall_result,
+          qsh.updated_at
+        FROM qa_sampling_header qsh
+        WHERE qsh.lot_id = pl.id
+        ORDER BY qsh.updated_at DESC, qsh.id DESC
+        LIMIT 1
+      ) latest_sampling ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT qsu.product_unit_id)::int AS sample_qty
+        FROM qa_sampling_header qsh
+        JOIN qa_sample_unit qsu ON qsu.qa_sampling_id = qsh.id
+        WHERE qsh.lot_id = pl.id
+      ) sample_progress ON true
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      GROUP BY pl.id, pm.id
+      GROUP BY pl.id, pm.id, latest_sampling.id, latest_sampling.status,
+        sample_progress.sample_qty, latest_sampling.overall_result, latest_sampling.updated_at
       ORDER BY pl.production_date DESC NULLS LAST, pl.created_at DESC, pl.id DESC
       LIMIT 100
     `,
@@ -172,19 +195,20 @@ async function findQaTemplatesByModelId(modelId) {
   const result = await pool.query(
     `
       SELECT
-        id,
-        model_id,
-        template_type,
-        template_name,
-        revision,
-        active,
-        created_at,
-        updated_at
-      FROM test_template
-      WHERE model_id = $1
-        AND template_type = 'QA'
-        AND active = true
-      ORDER BY revision DESC NULLS LAST, created_at DESC, id DESC
+        t.id,
+        t.model_id,
+        t.template_type,
+        t.template_name,
+        t.revision,
+        t.active,
+        t.created_at,
+        t.updated_at
+      FROM test_template t
+      JOIN test_template_model ttm ON ttm.template_id = t.id
+      WHERE ttm.model_id = $1
+        AND t.template_type = 'QA'
+        AND t.active = true
+      ORDER BY t.revision DESC NULLS LAST, t.created_at DESC, t.id DESC
     `,
     [modelId]
   );
@@ -211,6 +235,21 @@ async function findTemplateById(templateId) {
   );
 
   return result.rows[0] || null;
+}
+
+async function isTemplateAssignedToModel(templateId, modelId) {
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM test_template_model
+      WHERE template_id = $1
+        AND model_id = $2
+      LIMIT 1
+    `,
+    [templateId, modelId]
+  );
+
+  return Boolean(result.rows[0]);
 }
 
 async function findQaTemplateItems(templateId) {
@@ -267,6 +306,32 @@ async function findLotUnitsByIds(lotId, productUnitIds) {
   return result.rows;
 }
 
+async function findProductUnitContextByLotAndSerial(lotNumber, serialNumber) {
+  const result = await pool.query(
+    `
+      SELECT
+        pu.id,
+        pu.lot_id,
+        pu.model_id,
+        pu.serial_number,
+        pu.product_status AS unit_status,
+        pl.lot_number,
+        pl.lot_qty,
+        pl.status AS lot_status,
+        pm.model_code,
+        pm.product_name
+      FROM product_unit pu
+      JOIN production_lot pl ON pl.id = pu.lot_id
+      JOIN product_model pm ON pm.id = pu.model_id
+      WHERE pl.lot_number = $1
+        AND pu.serial_number = $2
+    `,
+    [lotNumber, serialNumber]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function findQaSamplingByLotTemplateNo(lotId, templateId, samplingNo, excludeId) {
   const values = [lotId, templateId, samplingNo];
   let excludeSql = '';
@@ -278,7 +343,7 @@ async function findQaSamplingByLotTemplateNo(lotId, templateId, samplingNo, excl
 
   const result = await pool.query(
     `
-      SELECT id
+      SELECT id, status, sampling_round
       FROM qa_sampling_header
       WHERE lot_id = $1
         AND template_id = $2
@@ -289,6 +354,37 @@ async function findQaSamplingByLotTemplateNo(lotId, templateId, samplingNo, excl
   );
 
   return result.rows[0] || null;
+}
+
+async function findLatestDraftSampling(lotId, templateId) {
+  const result = await pool.query(
+    `
+      SELECT id, status, sampling_round
+      FROM qa_sampling_header
+      WHERE lot_id = $1
+        AND template_id = $2
+        AND status = 'DRAFT'
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `,
+    [lotId, templateId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function findNextSamplingNo(lotId, templateId) {
+  const result = await pool.query(
+    `
+      SELECT COALESCE(MAX(sampling_round), 0)::int + 1 AS sampling_no
+      FROM qa_sampling_header
+      WHERE lot_id = $1
+        AND template_id = $2
+    `,
+    [lotId, templateId]
+  );
+
+  return result.rows[0].sampling_no;
 }
 
 async function createQaSamplingHeader(payload, client) {
@@ -953,9 +1049,13 @@ module.exports = {
   findLotSamplingStatus,
   findQaTemplatesByModelId,
   findTemplateById,
+  isTemplateAssignedToModel,
   findQaTemplateItems,
   findLotUnitsByIds,
+  findProductUnitContextByLotAndSerial,
   findQaSamplingByLotTemplateNo,
+  findLatestDraftSampling,
+  findNextSamplingNo,
   createQaSamplingHeader,
   updateQaSamplingHeader,
   insertQaSampleUnits,

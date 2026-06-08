@@ -19,6 +19,8 @@ export type ProductionLot = {
   created_at?: string;
   updated_at?: string;
   ecn_refs?: EcnRef[];
+  added_serials?: string[];
+  removed_serials?: string[];
 };
 
 export type ProductUnit = {
@@ -62,7 +64,9 @@ export type CreateProductionLotPayload = {
 export type UpdateProductionLotPayload = {
   production_date?: string | null;
   remark?: string | null;
-  status?: 'OPEN' | 'CLOSED' | 'HOLD' | 'CANCELLED';
+  status?: 'OPEN' | 'COMPLETED' | 'CLOSED' | 'HOLD' | 'CANCELLED';
+  lot_qty?: number;
+  serial_generation?: SerialGenerationPayload;
 };
 
 export type ReportPage<T> = {
@@ -101,6 +105,9 @@ export const productionLotsApi = {
   },
   async updateProductionLot(id: string | number, payload: UpdateProductionLotPayload) {
     return (await httpClient.put<ProductionLot>(`/production-lots/${id}`, payload)).data;
+  },
+  async deleteProductionLot(id: string | number) {
+    return (await httpClient.delete<{ id: number; lot_number: string }>(`/production-lots/${id}`)).data;
   },
   async getProductionLotSerials(id: string | number) {
     return (await httpClient.get<ProductUnit[]>(`/production-lots/${id}/serials`)).data;

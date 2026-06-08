@@ -111,8 +111,8 @@ async function countLots(filters = {}) {
   return result.rows[0].total;
 }
 
-async function findLotById(id) {
-  const result = await pool.query(
+async function findLotById(id, client) {
+  const result = await executor(client).query(
     `
       ${lotSelectSql()}
       WHERE pl.id = $1
@@ -178,7 +178,7 @@ async function createLot(payload, client) {
   return result.rows[0];
 }
 
-async function updateLot(id, payload) {
+async function updateLot(id, payload, client) {
   const fields = [];
   const values = [];
   const fieldMap = {
@@ -196,7 +196,11 @@ async function updateLot(id, payload) {
 
   values.push(id);
 
-  const result = await pool.query(
+  if (!fields.length) {
+    return findLotById(id, client);
+  }
+
+  const result = await executor(client).query(
     `
       UPDATE production_lot
       SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP
@@ -206,7 +210,7 @@ async function updateLot(id, payload) {
     values
   );
 
-  return result.rows[0] ? findLotById(id) : null;
+  return result.rows[0] ? findLotById(id, client) : null;
 }
 
 async function findSerialsByLotId(lotId) {
@@ -273,6 +277,186 @@ async function insertProductUnits({ lotId, modelId, serialNumbers }, client) {
   );
 
   return result.rows;
+}
+
+async function updateLotQty(lotId, lotQty, client) {
+  await executor(client).query(
+    `
+      UPDATE production_lot
+      SET lot_qty = $2, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `,
+    [lotId, lotQty]
+  );
+}
+
+async function findUnitsForRemoval(lotId, count, client) {
+  const result = await executor(client).query(
+    `
+      SELECT pu.id, pu.serial_number
+      FROM product_unit pu
+      WHERE pu.lot_id = $1
+      ORDER BY
+        CASE
+          WHEN EXISTS (
+            SELECT 1 FROM inspection_header ih WHERE ih.product_unit_id = pu.id
+          ) OR EXISTS (
+            SELECT 1 FROM qa_sample_unit qsu WHERE qsu.product_unit_id = pu.id
+          )
+          THEN 1
+          ELSE 0
+        END ASC,
+        pu.id DESC
+      LIMIT $2
+    `,
+    [lotId, count]
+  );
+
+  return result.rows;
+}
+
+async function deleteUnitWorkflowData(unitIds, client) {
+  if (!unitIds.length) {
+    return;
+  }
+
+  const db = executor(client);
+
+  await db.query(
+    `
+      DELETE FROM result_edit_audit_log
+      WHERE (
+        source_type = 'QC'
+        AND source_id IN (
+          SELECT id FROM inspection_header WHERE product_unit_id = ANY($1::int[])
+        )
+      ) OR (
+        source_type = 'QA'
+        AND detail_id IN (
+          SELECT qsd.id
+          FROM qa_sample_detail qsd
+          JOIN qa_sample_unit qsu ON qsu.id = qsd.qa_sample_unit_id
+          WHERE qsu.product_unit_id = ANY($1::int[])
+        )
+      )
+    `,
+    [unitIds]
+  );
+
+  await db.query(
+    `
+      DELETE FROM qa_sample_unit
+      WHERE product_unit_id = ANY($1::int[])
+    `,
+    [unitIds]
+  );
+
+  await db.query(
+    `
+      DELETE FROM product_unit
+      WHERE id = ANY($1::int[])
+    `,
+    [unitIds]
+  );
+}
+
+async function recalculateQaSamplingForLot(lotId, lotQty, client) {
+  await executor(client).query(
+    `
+      WITH summary AS (
+        SELECT
+          qsh.id,
+          COUNT(qsu.id)::int AS sample_count,
+          COUNT(*) FILTER (WHERE qsu.unit_result = 'PASS')::int AS pass_count,
+          COUNT(*) FILTER (WHERE qsu.unit_result = 'FAIL')::int AS fail_count,
+          COUNT(*) FILTER (
+            WHERE qsu.id IS NOT NULL
+              AND COALESCE(qsu.unit_result, 'N/A') NOT IN ('PASS', 'FAIL')
+          )::int AS incomplete_count
+        FROM qa_sampling_header qsh
+        LEFT JOIN qa_sample_unit qsu ON qsu.qa_sampling_id = qsh.id
+        WHERE qsh.lot_id = $1
+        GROUP BY qsh.id
+      )
+      UPDATE qa_sampling_header qsh
+      SET
+        lot_qty = $2::int,
+        sample_qty = summary.sample_count,
+        accept_qty = summary.pass_count,
+        reject_qty = summary.fail_count,
+        overall_result = CASE
+          WHEN summary.sample_count = 0 OR summary.incomplete_count > 0 THEN 'N/A'
+          WHEN summary.fail_count > 0 THEN 'FAIL'
+          ELSE 'PASS'
+        END,
+        status = CASE
+          WHEN summary.sample_count < GREATEST(1, CEIL($2::int * 0.10)::int) THEN 'DRAFT'
+          ELSE qsh.status
+        END,
+        qa_reviewer_user_id = CASE
+          WHEN summary.sample_count < GREATEST(1, CEIL($2::int * 0.10)::int) THEN NULL
+          ELSE qsh.qa_reviewer_user_id
+        END,
+        qa_approver_user_id = CASE
+          WHEN summary.sample_count < GREATEST(1, CEIL($2::int * 0.10)::int) THEN NULL
+          ELSE qsh.qa_approver_user_id
+        END,
+        reviewed_at = CASE
+          WHEN summary.sample_count < GREATEST(1, CEIL($2::int * 0.10)::int) THEN NULL
+          ELSE qsh.reviewed_at
+        END,
+        approved_at = CASE
+          WHEN summary.sample_count < GREATEST(1, CEIL($2::int * 0.10)::int) THEN NULL
+          ELSE qsh.approved_at
+        END,
+        updated_at = CURRENT_TIMESTAMP
+      FROM summary
+      WHERE qsh.id = summary.id
+    `,
+    [lotId, lotQty]
+  );
+}
+
+async function syncLotWorkflow(lotId, client) {
+  await executor(client).query(
+    `SELECT sync_lot_workflow_completion($1)`,
+    [lotId]
+  );
+}
+
+async function deleteLotGraph(lotId, client) {
+  const db = executor(client);
+
+  await db.query(
+    `
+      DELETE FROM result_edit_audit_log
+      WHERE (
+        source_type = 'QC'
+        AND source_id IN (
+          SELECT ih.id
+          FROM inspection_header ih
+          JOIN product_unit pu ON pu.id = ih.product_unit_id
+          WHERE pu.lot_id = $1
+        )
+      ) OR (
+        source_type = 'QA'
+        AND source_id IN (
+          SELECT id FROM qa_sampling_header WHERE lot_id = $1
+        )
+      )
+    `,
+    [lotId]
+  );
+
+  await db.query(`DELETE FROM qa_sampling_header WHERE lot_id = $1`, [lotId]);
+  await db.query(`DELETE FROM product_unit WHERE lot_id = $1`, [lotId]);
+
+  const result = await db.query(
+    `DELETE FROM production_lot WHERE id = $1 RETURNING id, lot_number`,
+    [lotId]
+  );
+
+  return result.rows[0] || null;
 }
 
 async function findEcnByIds(ecnIds) {
@@ -371,6 +555,12 @@ module.exports = {
   findSerialsByLotId,
   findExistingSerialsByModelId,
   insertProductUnits,
+  updateLotQty,
+  findUnitsForRemoval,
+  deleteUnitWorkflowData,
+  recalculateQaSamplingForLot,
+  syncLotWorkflow,
+  deleteLotGraph,
   findEcnByIds,
   deleteLotEcnRefs,
   insertLotEcnRefs,

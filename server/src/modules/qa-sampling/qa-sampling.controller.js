@@ -2,6 +2,7 @@ const { createdResponse, successResponse } = require('../../shared/response');
 const { parsePayload, parsePositiveInt } = require('../../shared/query');
 const {
   saveQaSamplingSchema,
+  saveQaSamplingBySerialSchema,
   updateQaSamplingSchema,
   workflowRemarkSchema,
   rejectWorkflowSchema,
@@ -15,6 +16,7 @@ const {
   listQaTemplatesByModel,
   getQaTemplateItems: getQaTemplateItemsService,
   createQaSampling,
+  createQaSamplingBySerial,
   updateQaSampling,
   getQaSampling,
   checkQaSamplingEquipment,
@@ -124,6 +126,23 @@ async function postQaSampling(req, res, next) {
 
     return createdResponse(res, {
       message: 'QA sampling created successfully',
+      data: sampling,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function postQaSamplingBySerial(req, res, next) {
+  try {
+    const sampling = await createQaSamplingBySerial({
+      payload: parsePayload(saveQaSamplingBySerialSchema, req.body),
+      userId: req.user.id,
+      requestId: req.requestId,
+    });
+
+    return createdResponse(res, {
+      message: 'QA sampling saved by serial successfully',
       data: sampling,
     });
   } catch (error) {
@@ -311,6 +330,7 @@ module.exports = {
   getQaTemplates,
   getQaTemplateItems,
   postQaSampling,
+  postQaSamplingBySerial,
   getQaSamplingById,
   putQaSampling,
   getQaEquipmentCheck,

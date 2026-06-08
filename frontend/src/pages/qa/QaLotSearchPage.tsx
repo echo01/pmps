@@ -61,11 +61,15 @@ export function QaLotSearchPage() {
         <label>Search<input value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="lot, model, product" /></label>
         <label>Model<input value={filters.model_code} onChange={(event) => updateFilter('model_code', event.target.value)} placeholder="All" /></label>
         <label>Lot<input value={filters.lot_number} onChange={(event) => updateFilter('lot_number', event.target.value)} placeholder="All" /></label>
-        <label>Status<select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}>
+        <label>Sampling Status<select value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}>
           <option value="">All</option>
-          <option value="OPEN">OPEN</option>
-          <option value="CLOSED">CLOSED</option>
-          <option value="CANCELLED">CANCELLED</option>
+          <option value="NOT_STARTED">NOT_STARTED</option>
+          <option value="DRAFT">DRAFT</option>
+          <option value="SUBMITTED">SUBMITTED</option>
+          <option value="REVIEWED">REVIEWED</option>
+          <option value="APPROVED">APPROVED</option>
+          <option value="REJECTED">REJECTED</option>
+          <option value="EDIT_REQUESTED">EDIT_REQUESTED</option>
         </select></label>
         <label>From<input type="date" value={filters.date_from} onChange={(event) => updateFilter('date_from', event.target.value)} /></label>
         <label>To<input type="date" value={filters.date_to} onChange={(event) => updateFilter('date_to', event.target.value)} /></label>
@@ -81,7 +85,7 @@ export function QaLotSearchPage() {
         {lots.data?.length ? (
           <div className="tableScroll">
             <table>
-              <thead><tr><th>Lot</th><th>Model</th><th>Product</th><th>Qty</th><th>Serials</th><th>Status</th><th>Action</th></tr></thead>
+              <thead><tr><th>Lot</th><th>Model</th><th>Product</th><th>Qty</th><th>Serials</th><th>Samples</th><th>Sampling Status</th><th>Result</th><th>Action</th></tr></thead>
               <tbody>
                 {lots.data.map((lot) => (
                   <tr key={lot.id}>
@@ -90,7 +94,9 @@ export function QaLotSearchPage() {
                     <td>{lot.product_name}</td>
                     <td>{lot.lot_qty}</td>
                     <td>{lot.serial_count}</td>
-                    <td><StatusBadge value={lot.status} /></td>
+                    <td>{lot.sample_qty || 0}</td>
+                    <td><StatusBadge value={lot.sampling_status} /></td>
+                    <td><StatusBadge value={lot.sampling_result || 'N/A'} /></td>
                     <td><button className="textButton" onClick={() => openLot(lot.id)} type="button">Open Lot</button></td>
                   </tr>
                 ))}

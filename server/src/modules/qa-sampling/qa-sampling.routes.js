@@ -2,6 +2,7 @@ const express = require('express');
 
 const { authMiddleware } = require('../../middlewares/auth.middleware');
 const { requirePermission } = require('../../middlewares/rbac.middleware');
+const { badRequest } = require('../../shared/http-error');
 const {
   getQaLots,
   getQaLotSamplingStatus,
@@ -9,6 +10,7 @@ const {
   getQaTemplates,
   getQaTemplateItems,
   postQaSampling,
+  postQaSamplingBySerial,
   getQaSamplingById,
   putQaSampling,
   getQaEquipmentCheck,
@@ -33,6 +35,15 @@ router.get('/qa/models/:modelId/templates', qaAccess, getQaTemplates);
 router.get('/qa/templates/:templateId/items', qaAccess, getQaTemplateItems);
 
 router.post('/qa/samplings', qaAccess, postQaSampling);
+router.post('/qa/samplings/by-serial', qaAccess, postQaSamplingBySerial);
+router.all('/qa/samplings/by-serial', (req, res, next) => next(
+  badRequest('Use POST /api/qa/samplings/by-serial to save QA sampling by serial', [
+    {
+      field: 'method',
+      message: `Method ${req.method} is not supported for this endpoint`,
+    },
+  ])
+));
 router.get('/qa/samplings/:id/equipment-check', qaAccess, getQaEquipmentCheck);
 router.get('/qa/samplings/:id', qaAccess, getQaSamplingById);
 router.put('/qa/samplings/:id', qaAccess, putQaSampling);

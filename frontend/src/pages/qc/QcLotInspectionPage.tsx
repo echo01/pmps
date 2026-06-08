@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw, Save } from 'lucide-react';
+import { ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, RefreshCw, Save } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { qcApi, QcInspectionPayload, QcSerialStatus, TemplateItem } from '../../api/qc.api';
+import { qcApi, QcBulkWorkflowAction, QcInspectionPayload, QcSerialStatus, TemplateItem } from '../../api/qc.api';
 import { useAuth } from '../../auth/useAuth';
 import { can } from '../../auth/permission';
 import { StatusBadge } from '../../components/badges/StatusBadge';
@@ -62,6 +62,11 @@ function actionLabel(status: string) {
 }
 
 const SERIAL_PAGE_SIZE = 10;
+const bulkSourceStatus: Record<QcBulkWorkflowAction, QcSerialStatus['qc_status']> = {
+  SUBMIT: 'DRAFT',
+  REVIEW: 'SUBMITTED',
+  APPROVE: 'REVIEWED',
+};
 
 type SerialFilters = {
   no: string;
@@ -107,6 +112,9 @@ export function QcLotInspectionPage() {
   const [drafts, setDrafts] = useState<Record<number, ResultDraft>>({});
   const [serialPage, setSerialPage] = useState(1);
   const [serialFilters, setSerialFilters] = useState<SerialFilters>(emptySerialFilters);
+  const [bulkAction, setBulkAction] = useState<QcBulkWorkflowAction>('SUBMIT');
+  const [bulkRemark, setBulkRemark] = useState('');
+  const [selectedBulkIds, setSelectedBulkIds] = useState<number[]>([]);
   const [editRequestOpen, setEditRequestOpen] = useState(false);
 
   const statusQuery = useQuery({
@@ -156,12 +164,21 @@ export function QcLotInspectionPage() {
   }, [detail.data]);
 
   useEffect(() => {
+    if (templateId || !templates.data?.length) return;
+    setTemplateId(String(templates.data[0].id));
+  }, [templateId, templates.data]);
+
+  useEffect(() => {
     if (items.data) setDrafts(toDrafts(items.data, detail.data?.details as Array<Record<string, unknown>> | undefined));
   }, [items.data, detail.data?.details]);
 
   useEffect(() => {
     setSerialPage(1);
   }, [serialFilters]);
+
+  useEffect(() => {
+    setSelectedBulkIds([]);
+  }, [bulkAction, lotId]);
 
   const overallPreview = useMemo(() => {
     const results = (items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[item.id] || emptyDraft()) }));
@@ -212,6 +229,22 @@ export function QcLotInspectionPage() {
       queryClient.invalidateQueries({ queryKey: ['qc-lot-inspection-status', lotId] });
       queryClient.invalidateQueries({ queryKey: ['qc-lot-selected-inspection', selectedInspectionId] });
       window.setTimeout(() => serialPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    },
+  });
+
+  const bulkWorkflowMutation = useMutation({
+    mutationFn: (scope: 'selected' | 'lot') => qcApi.bulkWorkflow({
+      action: bulkAction,
+      ...(scope === 'selected' ? { inspection_ids: selectedBulkIds } : { lot_id: Number(lotId) }),
+      remark: bulkRemark,
+    }),
+    onSuccess: (data) => {
+      logger.info('[QC_LOT_INSPECTION][BULK_WORKFLOW][API_SUCCESS]', data);
+      setSelectedBulkIds([]);
+      queryClient.invalidateQueries({ queryKey: ['qc-lot-inspection-status', lotId] });
+      if (selectedInspectionId && data.inspection_ids.includes(selectedInspectionId)) {
+        queryClient.invalidateQueries({ queryKey: ['qc-lot-selected-inspection', selectedInspectionId] });
+      }
     },
   });
 
@@ -270,6 +303,14 @@ export function QcLotInspectionPage() {
   const statusOptions = Array.from(new Set(serials.map((row) => row.qc_status))).sort();
   const resultOptions = Array.from(new Set(serials.map((row) => row.overall_result || 'N/A'))).sort();
   const actionOptions = Array.from(new Set(serials.map((row) => actionLabel(row.qc_status)))).sort();
+  const eligibleBulkIds = numberedSerials
+    .filter((row) => row.inspection_id && row.qc_status === bulkSourceStatus[bulkAction])
+    .map((row) => Number(row.inspection_id));
+  const pagedEligibleIds = pagedSerials
+    .filter((row) => row.inspection_id && row.qc_status === bulkSourceStatus[bulkAction])
+    .map((row) => Number(row.inspection_id));
+  const allPagedEligibleSelected = pagedEligibleIds.length > 0
+    && pagedEligibleIds.every((id) => selectedBulkIds.includes(id));
   const hasSerialFilters = Object.values(serialFilters).some(Boolean);
   const qcEditDetails: EditResultDetail[] = (detail.data?.details || []).map((row) => ({
     ...row,
@@ -284,6 +325,25 @@ export function QcLotInspectionPage() {
     setSerialFilters({ ...serialFilters, [key]: value });
   }
 
+  function toggleBulkInspection(id: number) {
+    setSelectedBulkIds((current) => current.includes(id)
+      ? current.filter((inspectionId) => inspectionId !== id)
+      : [...current, id]);
+  }
+
+  function toggleCurrentPageBulk() {
+    setSelectedBulkIds((current) => allPagedEligibleSelected
+      ? current.filter((id) => !pagedEligibleIds.includes(id))
+      : Array.from(new Set([...current, ...pagedEligibleIds])));
+  }
+
+  function runBulkWorkflow(scope: 'selected' | 'lot') {
+    const count = scope === 'selected' ? selectedBulkIds.length : eligibleBulkIds.length;
+    if (!count) return;
+    const target = scope === 'selected' ? `${count} selected inspection(s)` : `${count} eligible inspection(s) in this lot`;
+    if (window.confirm(`${bulkAction} ${target}?`)) bulkWorkflowMutation.mutate(scope);
+  }
+
   return (
     <div className="pageStack">
       <div className="pageHeader">
@@ -292,6 +352,11 @@ export function QcLotInspectionPage() {
           <span className="eyebrow">QC Inspection</span>
           <h1>{lot.lot_number}</h1>
           <p className="mutedText">{lot.model_code} - {lot.product_name}</p>
+          <div className="lotSamplingStatus">
+            <span>Lot QC</span>
+            <StatusBadge value={lot.qc_status} />
+            <StatusBadge value={lot.qc_result} />
+          </div>
         </div>
         <button className="textButton" onClick={() => statusQuery.refetch()}><RefreshCw size={16} /> Refresh</button>
       </div>
@@ -307,6 +372,7 @@ export function QcLotInspectionPage() {
 
       {saveMutation.error ? <ErrorAlert error={saveMutation.error} title="Unable to save QC draft" /> : null}
       {workflowMutation.error ? <ErrorAlert error={workflowMutation.error} title="Unable to update workflow" /> : null}
+      {bulkWorkflowMutation.error ? <ErrorAlert error={bulkWorkflowMutation.error} title="Unable to update bulk workflow" /> : null}
       {requestEditMutation.error ? <ErrorAlert error={requestEditMutation.error} title="Unable to request edit" /> : null}
 
       <div className="qcLotWorkspace">
@@ -334,12 +400,35 @@ export function QcLotInspectionPage() {
           <div className="qcScoreBar" aria-label={`QC inspection score ${serialScore}%`}>
             <i style={{ width: `${serialScore}%` }} />
           </div>
+          <div className="qcBulkToolbar">
+            <label>Bulk action
+              <select value={bulkAction} onChange={(event) => setBulkAction(event.target.value as QcBulkWorkflowAction)}>
+                <option value="SUBMIT">Submit drafts</option>
+                <option value="REVIEW">Review submitted</option>
+                <option value="APPROVE">Approve reviewed</option>
+              </select>
+            </label>
+            <label className="qcBulkRemark">Remark
+              <input value={bulkRemark} onChange={(event) => setBulkRemark(event.target.value)} placeholder="Optional workflow remark" />
+            </label>
+            <button className="textButton" disabled={!selectedBulkIds.length || bulkWorkflowMutation.isPending} onClick={() => runBulkWorkflow('selected')} type="button">
+              <CheckCheck size={16} /> Apply to selected ({selectedBulkIds.length})
+            </button>
+            <button className="primaryButton" disabled={!eligibleBulkIds.length || bulkWorkflowMutation.isPending} onClick={() => runBulkWorkflow('lot')} type="button">
+              <CheckCheck size={16} /> Apply to lot ({eligibleBulkIds.length})
+            </button>
+          </div>
           <div className="tableScroll">
-            <table>
+            <table className="qcSerialTable">
+              <colgroup><col className="qcSelectColumn" /><col className="qcNoColumn" /></colgroup>
               <thead>
-                <tr><th>No.</th><th>Serial</th><th>QC Status</th><th>Result</th><th>Template</th><th>Updated</th><th>Action</th></tr>
+                <tr>
+                  <th><input aria-label="Select eligible inspections on current page" checked={allPagedEligibleSelected} disabled={!pagedEligibleIds.length} onChange={toggleCurrentPageBulk} type="checkbox" /></th>
+                  <th>No.</th><th>Serial</th><th>QC Status</th><th>Result</th><th>Template</th><th>Updated</th><th>Action</th>
+                </tr>
                 <tr className="tableFilterRow">
-                  <th><input aria-label="Filter by row number" value={serialFilters.no} onChange={(event) => updateSerialFilter('no', event.target.value)} placeholder="No." /></th>
+                  <th />
+                  <th><input className="qcNoFilter" maxLength={4} aria-label="Filter by row number" value={serialFilters.no} onChange={(event) => updateSerialFilter('no', event.target.value)} placeholder="No." /></th>
                   <th><input aria-label="Filter by serial" value={serialFilters.serial} onChange={(event) => updateSerialFilter('serial', event.target.value)} placeholder="Serial" /></th>
                   <th><select aria-label="Filter by QC status" value={serialFilters.status} onChange={(event) => updateSerialFilter('status', event.target.value)}><option value="">All</option>{statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></th>
                   <th><select aria-label="Filter by result" value={serialFilters.result} onChange={(event) => updateSerialFilter('result', event.target.value)}><option value="">All</option>{resultOptions.map((result) => <option key={result} value={result}>{result}</option>)}</select></th>
@@ -351,6 +440,7 @@ export function QcLotInspectionPage() {
               <tbody>
                 {pagedSerials.map((row, index) => (
                   <tr key={row.product_unit_id} className={selectedSerial?.product_unit_id === row.product_unit_id ? 'selectedRow' : ''}>
+                    <td><input aria-label={`Select inspection for serial ${row.serial_number}`} checked={Boolean(row.inspection_id && selectedBulkIds.includes(row.inspection_id))} disabled={!row.inspection_id || row.qc_status !== bulkSourceStatus[bulkAction]} onChange={() => row.inspection_id && toggleBulkInspection(row.inspection_id)} type="checkbox" /></td>
                     <td>{row.rowNo}</td>
                     <td>{row.serial_number}</td>
                     <td><StatusBadge value={row.qc_status} /></td>
@@ -360,7 +450,7 @@ export function QcLotInspectionPage() {
                     <td><button className="textButton" onClick={() => selectSerial(row, row.rowNo)}>{actionLabel(row.qc_status)}</button></td>
                   </tr>
                 ))}
-                {!pagedSerials.length ? <tr><td colSpan={7}><EmptyState message="No serials match the current filters" /></td></tr> : null}
+                {!pagedSerials.length ? <tr><td colSpan={8}><EmptyState message="No serials match the current filters" /></td></tr> : null}
               </tbody>
             </table>
           </div>

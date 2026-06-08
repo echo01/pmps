@@ -3,6 +3,10 @@ const {
   getTemplate,
   createNewTemplate,
   updateExistingTemplate,
+  removeTemplate,
+  duplicateExistingTemplate,
+  listTemplateModels,
+  updateTemplateModels,
   listSections,
   createNewSection,
   updateExistingSection,
@@ -23,6 +27,8 @@ const {
 const {
   createTemplateSchema,
   updateTemplateSchema,
+  duplicateTemplateSchema,
+  assignTemplateModelsSchema,
   createSectionSchema,
   updateSectionSchema,
   createItemSchema,
@@ -41,6 +47,39 @@ async function getTemplates(req, res, next) {
     return successResponse(res, {
       message: 'Test templates retrieved successfully',
       data: templates,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getTemplateModels(req, res, next) {
+  try {
+    const models = await listTemplateModels({
+      templateId: parsePositiveInt(req.params.id, 'id'),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Template models retrieved successfully',
+      data: models,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function putTemplateModels(req, res, next) {
+  try {
+    const models = await updateTemplateModels({
+      templateId: parsePositiveInt(req.params.id, 'id'),
+      payload: parsePayload(assignTemplateModelsSchema, req.body),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Template models updated successfully',
+      data: models,
     });
   } catch (error) {
     return next(error);
@@ -90,6 +129,40 @@ async function putTemplate(req, res, next) {
 
     return successResponse(res, {
       message: 'Test template updated successfully',
+      data: template,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function deleteTemplateById(req, res, next) {
+  try {
+    const deleted = await removeTemplate({
+      id: parsePositiveInt(req.params.id, 'id'),
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: 'Test template deleted successfully',
+      data: deleted,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function postDuplicateTemplate(req, res, next) {
+  try {
+    const template = await duplicateExistingTemplate({
+      id: parsePositiveInt(req.params.id, 'id'),
+      payload: parsePayload(duplicateTemplateSchema, req.body),
+      userId: req.user?.id,
+      requestId: req.requestId,
+    });
+
+    return createdResponse(res, {
+      message: 'Test template duplicated successfully',
       data: template,
     });
   } catch (error) {
@@ -234,6 +307,10 @@ module.exports = {
   postTemplate,
   getTemplateById,
   putTemplate,
+  deleteTemplateById,
+  postDuplicateTemplate,
+  getTemplateModels,
+  putTemplateModels,
   getSections,
   postSection,
   putSection,

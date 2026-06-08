@@ -82,6 +82,88 @@ function normalizeItems(payloadItems, templateItems) {
   });
 }
 
+function resolveBySerialItems(payloadItems, templateItems) {
+  const codeToItems = new Map();
+
+  for (const item of templateItems) {
+    const code = String(item.item_code || '').trim().toUpperCase();
+
+    if (!code) {
+      continue;
+    }
+
+    if (!codeToItems.has(code)) {
+      codeToItems.set(code, []);
+    }
+
+    codeToItems.get(code).push(item);
+  }
+
+  return payloadItems.map((payloadItem) => {
+    if (payloadItem.template_item_id) {
+      if (payloadItem.item_code) {
+        const matchingItem = templateItems.find((item) => item.id === payloadItem.template_item_id);
+
+        if (matchingItem && String(matchingItem.item_code || '').trim().toUpperCase() !== String(payloadItem.item_code).trim().toUpperCase()) {
+          throw validationError('Validation failed', [
+            {
+              field: 'items',
+              message: `item_code ${payloadItem.item_code} does not match template_item_id ${payloadItem.template_item_id}`,
+            },
+          ]);
+        }
+      }
+
+      return payloadItem;
+    }
+
+    const code = String(payloadItem.item_code || '').trim().toUpperCase();
+    const matches = codeToItems.get(code) || [];
+
+    if (!matches.length) {
+      throw validationError('Validation failed', [
+        {
+          field: 'items',
+          message: `Template item code not found in template: ${payloadItem.item_code}`,
+        },
+      ]);
+    }
+
+    if (matches.length > 1) {
+      throw validationError('Validation failed', [
+        {
+          field: 'items',
+          message: `Template item code is duplicated in template: ${payloadItem.item_code}`,
+        },
+      ]);
+    }
+
+    return {
+      template_item_id: matches[0].id,
+      measured_value: payloadItem.measured_value ?? null,
+      measured_text: payloadItem.measured_text || null,
+      remark: payloadItem.remark || null,
+    };
+  });
+}
+
+function assertResolvedItemsUnique(items) {
+  const seen = new Set();
+
+  for (const item of items) {
+    if (seen.has(item.template_item_id)) {
+      throw validationError('Validation failed', [
+        {
+          field: 'items',
+          message: 'template_item_id or item_code must not resolve to duplicated template item',
+        },
+      ]);
+    }
+
+    seen.add(item.template_item_id);
+  }
+}
+
 async function assertTemplateUsable(templateId, modelId) {
   const template = await repository.findTemplateById(templateId);
 
@@ -112,11 +194,13 @@ async function assertTemplateUsable(templateId, modelId) {
     ]);
   }
 
-  if (template.model_id !== modelId) {
+  const assigned = await repository.isTemplateAssignedToModel(templateId, modelId);
+
+  if (!assigned) {
     throw validationError('Validation failed', [
       {
         field: 'template_id',
-        message: 'Template model does not match product unit model',
+        message: 'Template is not assigned to product unit model',
       },
     ]);
   }
@@ -183,6 +267,25 @@ function buildQcSummary(serials) {
   }, initial);
 }
 
+function deriveQcLotStatus(summary, total) {
+  const started = total - summary.not_started;
+
+  if (!started) return 'NOT_STARTED';
+  if (summary.approved === total) return 'APPROVED';
+  if (summary.edit_requested > 0) return 'EDIT_REQUESTED';
+  if (summary.rejected > 0) return 'REJECTED';
+  if (summary.reviewed > 0) return 'REVIEWED';
+  if (summary.submitted > 0) return 'SUBMITTED';
+  if (summary.draft > 0) return 'DRAFT';
+  return 'IN_PROGRESS';
+}
+
+function deriveQcLotResult(serials, summary) {
+  if (summary.approved !== serials.length) return 'N/A';
+  if (serials.some((serial) => serial.overall_result === 'FAIL')) return 'FAIL';
+  return serials.length && serials.every((serial) => serial.overall_result === 'PASS') ? 'PASS' : 'N/A';
+}
+
 async function listQcLots({ filters = {}, requestId }) {
   console.info('[QC][LOTS][LIST]', { requestId, filters });
   return repository.findQcLots(filters);
@@ -210,13 +313,18 @@ async function getQcLotInspectionStatus({ lotId, requestId }) {
   }
 
   const serials = await repository.findLotInspectionStatus(lotId);
+  const summary = buildQcSummary(serials);
 
   return {
     lot: {
       ...lot,
       serial_count: serials.length,
+      qc_status: deriveQcLotStatus(summary, serials.length),
+      qc_result: deriveQcLotResult(serials, summary),
+      started_count: serials.length - summary.not_started,
+      approved_count: summary.approved,
     },
-    summary: buildQcSummary(serials),
+    summary,
     serials,
   };
 }
@@ -342,6 +450,71 @@ async function createQcInspection({ payload, userId, requestId }) {
   });
 
   return getQcInspection({ id: result.id, requestId });
+}
+
+async function createQcInspectionBySerial({ payload, userId, requestId }) {
+  console.info('[QC][SAVE_BY_SERIAL][START]', {
+    requestId,
+    lot_number: payload.lot_number,
+    serial_number: payload.serial_number,
+    template_id: payload.template_id || null,
+    itemCount: payload.items.length,
+  });
+
+  const unit = await repository.findProductUnitContextByLotAndSerial(payload.lot_number, payload.serial_number);
+
+  if (!unit) {
+    throw validationError('Validation failed', [
+      {
+        field: 'serial_number',
+        message: 'Serial number was not found in the specified lot',
+      },
+    ]);
+  }
+
+  let templateId = payload.template_id || null;
+
+  if (!templateId) {
+    const templates = await repository.findInspectionTemplatesByModelId(unit.model_id);
+    templateId = templates[0]?.id || null;
+
+    if (!templateId) {
+      throw validationError('Validation failed', [
+        {
+          field: 'template_id',
+          message: 'No active INSPECTION template is assigned to this model',
+        },
+      ]);
+    }
+  }
+
+  const templateItems = await repository.findInspectionTemplateItems(templateId);
+  const resolvedItems = resolveBySerialItems(payload.items, templateItems);
+  assertResolvedItemsUnique(resolvedItems);
+
+  const inspection = await createQcInspection({
+    payload: {
+      product_unit_id: unit.id,
+      template_id: templateId,
+      inspection_no: unit.inspection_no,
+      station_name: payload.station_name,
+      equipment_ids: payload.equipment_ids,
+      items: resolvedItems,
+      remark: payload.remark,
+    },
+    userId,
+    requestId,
+  });
+
+  console.info('[QC][SAVE_BY_SERIAL][SUCCESS]', {
+    requestId,
+    inspectionId: inspection.id,
+    product_unit_id: unit.id,
+    template_id: templateId,
+    inspection_no: unit.inspection_no,
+  });
+
+  return inspection;
 }
 
 async function getQcInspection({ id, requestId }) {
@@ -556,6 +729,110 @@ async function rejectQcInspection({ id, userId, remark, requestId }) {
   });
 }
 
+const bulkWorkflowConfig = {
+  SUBMIT: { fromStatus: 'DRAFT', toStatus: 'SUBMITTED' },
+  REVIEW: { fromStatus: 'SUBMITTED', toStatus: 'REVIEWED' },
+  APPROVE: { fromStatus: 'REVIEWED', toStatus: 'APPROVED' },
+};
+
+async function bulkQcInspectionWorkflow({ payload, userId, requestId }) {
+  const config = bulkWorkflowConfig[payload.action];
+
+  console.info('[QC][BULK_WORKFLOW][START]', {
+    requestId,
+    action: payload.action,
+    inspectionIds: payload.inspection_ids || null,
+    lotId: payload.lot_id || null,
+  });
+
+  const result = await withTransaction(
+    async (client) => {
+      const inspections = await repository.findInspectionsForBulkWorkflow(
+        {
+          inspectionIds: payload.inspection_ids,
+          lotId: payload.lot_id,
+          status: config.fromStatus,
+        },
+        client
+      );
+
+      if (!inspections.length) {
+        throw conflict(`No QC inspections are ready for ${payload.action}`);
+      }
+
+      if (payload.inspection_ids && inspections.length !== payload.inspection_ids.length) {
+        throw conflict('Some QC inspections were not found');
+      }
+
+      const invalidStatuses = inspections.filter((inspection) => inspection.status !== config.fromStatus);
+      if (invalidStatuses.length) {
+        throw conflict(
+          `All selected QC inspections must be ${config.fromStatus}`,
+          invalidStatuses.map((inspection) => ({
+            field: 'inspection_ids',
+            message: `Inspection ${inspection.id} is ${inspection.status}`,
+          }))
+        );
+      }
+
+      if (payload.action === 'SUBMIT' || payload.action === 'APPROVE') {
+        for (const inspection of inspections) {
+          const equipment = await repository.findInspectionEquipment(inspection.id, client);
+          const equipmentContext = await buildEquipmentValidation({
+            modelId: inspection.model_id,
+            equipmentIds: equipment.map((row) => row.equipment_id),
+            requestId,
+          });
+          assertEquipmentValid(equipmentContext.validation);
+        }
+      }
+
+      for (const inspection of inspections) {
+        await repository.updateInspectionStatus(
+          inspection.id,
+          {
+            status: config.toStatus,
+            ...(payload.action === 'REVIEW' ? { reviewer_user_id: userId } : {}),
+            ...(payload.action === 'APPROVE' ? { approver_user_id: userId } : {}),
+          },
+          client
+        );
+        await repository.insertApprovalLog(
+          {
+            source_id: inspection.id,
+            action: payload.action,
+            old_status: inspection.status,
+            new_status: config.toStatus,
+            action_by: userId,
+            remark: payload.remark,
+          },
+          client
+        );
+      }
+
+      return {
+        action: payload.action,
+        from_status: config.fromStatus,
+        to_status: config.toStatus,
+        processed_count: inspections.length,
+        inspection_ids: inspections.map((inspection) => inspection.id),
+      };
+    },
+    {
+      requestId,
+      name: `qc-bulk-${payload.action.toLowerCase()}`,
+    }
+  );
+
+  console.info('[QC][BULK_WORKFLOW][SUCCESS]', {
+    requestId,
+    action: payload.action,
+    processedCount: result.processed_count,
+  });
+
+  return result;
+}
+
 async function requestQcInspectionEdit({ id, userId, reason, requestId }) {
   console.info('[QC][EDIT_REQUEST][START]', { requestId, id, userId });
 
@@ -749,6 +1026,7 @@ module.exports = {
   listQcTemplatesByModel,
   getQcTemplateItems,
   createQcInspection,
+  createQcInspectionBySerial,
   updateQcInspection,
   getQcInspection,
   checkQcInspectionEquipment,
@@ -756,6 +1034,7 @@ module.exports = {
   reviewQcInspection,
   approveQcInspection,
   rejectQcInspection,
+  bulkQcInspectionWorkflow,
   requestQcInspectionEdit,
   applyQcInspectionEdit,
   getQcInspectionEditHistory,

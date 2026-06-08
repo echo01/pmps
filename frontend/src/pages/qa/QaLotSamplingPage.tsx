@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw, Save } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClientError } from '../../api/apiResponse';
 import { Link, useParams } from 'react-router-dom';
@@ -23,7 +23,7 @@ import { ResultDraft } from '../../components/transaction/ResultInputCell';
 import { ResultGrid } from '../../components/transaction/ResultGrid';
 import { formatDateTime } from '../../utils/dateFormat';
 import { logger } from '../../utils/logger';
-import { calculateOverallResult, calculatePreviewResult, normalizeMeasuredText, normalizeMeasuredValue } from '../../utils/resultPreview';
+import { calculateCompleteOverallResult, calculatePreviewResult, normalizeMeasuredText, normalizeMeasuredValue } from '../../utils/resultPreview';
 
 type SampleDrafts = Record<number, Record<number, ResultDraft>>;
 type SampleFilters = {
@@ -121,6 +121,7 @@ export function QaLotSamplingPage() {
   const canEditResult = can('EditTestResult', permissions);
   const canViewEditHistory = can('SearchReport', permissions);
   const samplePanelRef = useRef<HTMLElement | null>(null);
+  const selectedSamplesRef = useRef<HTMLElement | null>(null);
   const samplingFormRef = useRef<HTMLElement | null>(null);
   const [activeQaSamplingId, setActiveQaSamplingId] = useState<number | null>(null);
   const [selectedRow, setSelectedRow] = useState<QaSampleStatus | null>(null);
@@ -194,6 +195,11 @@ export function QaLotSamplingPage() {
   }, [detail.data]);
 
   useEffect(() => {
+    if (templateId || !templates.data?.length) return;
+    setTemplateId(String(templates.data[0].id));
+  }, [templateId, templates.data]);
+
+  useEffect(() => {
     if (!items.data) return;
 
     if (detail.data?.sample_units && activeQaSamplingId) {
@@ -221,9 +227,9 @@ export function QaLotSamplingPage() {
   const overallPreview = useMemo(() => {
     const unitResults = sampleUnits.map((unit) => {
       const rowResults = (items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[unit.id]?.[item.id] || emptyDraft()) }));
-      return calculateOverallResult(rowResults);
+      return calculateCompleteOverallResult(rowResults);
     });
-    return calculateOverallResult(unitResults);
+    return calculateCompleteOverallResult(unitResults);
   }, [drafts, items.data, sampleUnits]);
 
   const currentStatus = detail.data?.status || selectedRow?.qa_status || 'NEW';
@@ -231,6 +237,7 @@ export function QaLotSamplingPage() {
 
   function resetNewSampling() {
     setActiveQaSamplingId(null);
+    setSelectedRow(null);
     setSampleUnits([]);
     setDrafts({});
   }
@@ -238,9 +245,9 @@ export function QaLotSamplingPage() {
   function selectSample(row: QaSampleStatus & { rowNo: number }) {
     logger.info('[QA_LOT_SAMPLING][SAMPLE_SELECT]', { product_unit_id: row.product_unit_id, qa_sampling_id: row.qa_sampling_id, status: row.qa_status, sampling_no: row.rowNo });
     setSelectedRow(row);
-    setSamplingNo(String(row.rowNo));
 
     if (row.qa_sampling_id) {
+      setSamplingNo(String(row.sampling_no || row.rowNo));
       setActiveQaSamplingId(row.qa_sampling_id);
     } else {
       const canAddToCurrentDraft = activeQaSamplingId && (detail.data?.status || selectedRow?.qa_status) === 'DRAFT';
@@ -249,10 +256,13 @@ export function QaLotSamplingPage() {
         resetNewSampling();
       }
 
+      if (!sampleUnits.length && !activeQaSamplingId) {
+        setSamplingNo(String(row.rowNo));
+      }
       setSampleUnits((current) => current.some((unit) => unit.id === row.product_unit_id) ? current : [...current, toUnit(row)]);
     }
 
-    window.setTimeout(() => samplingFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    window.setTimeout(() => (row.qa_sampling_id ? samplingFormRef : selectedSamplesRef).current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   }
 
   function removeSample(unitId: number) {
@@ -306,6 +316,15 @@ export function QaLotSamplingPage() {
 
       return {
         ...current,
+        lot: {
+          ...current.lot,
+          qa_sampling_id: sampling.id,
+          sampling_status: sampling.status,
+          selected_sample_qty: sampling.sample_units.length,
+          sampling_percent: current.lot.lot_qty
+            ? Math.round((sampling.sample_units.length / current.lot.lot_qty) * 10000) / 100
+            : 0,
+        },
         summary: buildQaSummary(nextSamples),
         samples: nextSamples,
       };
@@ -442,6 +461,9 @@ export function QaLotSamplingPage() {
   const totalSamples = samples.length;
   const startedSamples = totalSamples - summary.not_started;
   const sampleScore = totalSamples ? Math.round((startedSamples / totalSamples) * 100) : 0;
+  const minimumRequired = lot.minimum_sample_qty || Math.max(1, Math.ceil(Number(lot.lot_qty || totalSamples) * 0.1));
+  const selectedSamplingPercent = totalSamples ? Math.round((sampleUnits.length / totalSamples) * 10000) / 100 : 0;
+  const minimumMet = sampleUnits.length >= minimumRequired;
   const numberedSamples = samples.map((row, index) => ({ ...row, rowNo: index + 1 }));
   const filteredSamples = numberedSamples.filter((row) => {
     const result = row.unit_result || row.overall_result || 'N/A';
@@ -485,6 +507,11 @@ export function QaLotSamplingPage() {
           <span className="eyebrow">QA Sampling</span>
           <h1>{lot.lot_number}</h1>
           <p className="mutedText">{lot.model_code} - {lot.product_name}</p>
+          <div className="lotSamplingStatus">
+            <span>Lot Sampling</span>
+            <StatusBadge value={lot.sampling_status} />
+            {lot.qa_sampling_id ? <span className="mutedText">ID {lot.qa_sampling_id}</span> : null}
+          </div>
         </div>
         <button className="textButton" onClick={() => statusQuery.refetch()}><RefreshCw size={16} /> Refresh</button>
       </div>
@@ -521,10 +548,10 @@ export function QaLotSamplingPage() {
         <section className="panel" ref={samplePanelRef}>
           <div className="qcSerialPanelHeader">
             <div>
-              <h2>Samples in Lot</h2>
-              <p className="mutedText">{startedSamples} of {totalSamples} serials have QA sampling activity</p>
+              <h2>Serials in Lot</h2>
+              <p className="mutedText">Select at least {minimumRequired} of {totalSamples} serials (10% rounded up)</p>
             </div>
-            <strong>{sampleScore}%</strong>
+            <strong>{startedSamples} sampled</strong>
           </div>
           <div className="qcScoreBar" aria-label={`QA sampling score ${sampleScore}%`}><i style={{ width: `${sampleScore}%` }} /></div>
           <div className="tableScroll">
@@ -544,6 +571,7 @@ export function QaLotSamplingPage() {
               <tbody>
                 {pagedSamples.map((row) => {
                   const selected = sampleUnits.some((unit) => unit.id === row.product_unit_id) || activeQaSamplingId === row.qa_sampling_id;
+                  const pendingSelection = selected && !row.qa_sampling_id;
                   return (
                     <tr key={row.product_unit_id} className={selected ? 'selectedRow' : ''}>
                       <td>{row.rowNo}</td>
@@ -552,7 +580,7 @@ export function QaLotSamplingPage() {
                       <td><StatusBadge value={row.unit_result || row.overall_result || 'N/A'} /></td>
                       <td>{row.template_name || '-'}</td>
                       <td>{formatDateTime(row.updated_at)}</td>
-                      <td><button className="textButton" onClick={() => selectSample(row)}>{actionLabel(row.qa_status)}</button></td>
+                      <td><button className="textButton" disabled={pendingSelection} onClick={() => selectSample(row)}>{pendingSelection ? 'Added' : actionLabel(row.qa_status)}</button></td>
                     </tr>
                   );
                 })}
@@ -571,6 +599,56 @@ export function QaLotSamplingPage() {
           </div>
         </section>
 
+        <section className="panel" ref={selectedSamplesRef}>
+          <div className="qcSerialPanelHeader">
+            <div>
+              <h2>Selected Samples</h2>
+              <p className="mutedText">
+                {sampleUnits.length} selected, minimum {minimumRequired}. More than 10% is allowed.
+              </p>
+            </div>
+            <div className="samplingRequirement">
+              <StatusBadge value={minimumMet ? 'READY' : 'N/A'} />
+              <strong>{selectedSamplingPercent}%</strong>
+            </div>
+          </div>
+          <div className="qcScoreBar" aria-label={`Selected sampling rate ${selectedSamplingPercent}%`}>
+            <i style={{ width: `${Math.min(100, selectedSamplingPercent)}%` }} />
+          </div>
+          {!sampleUnits.length ? <EmptyState message={`Add at least ${minimumRequired} sample(s) from Serials in Lot`} /> : (
+            <div className="tableScroll">
+              <table>
+                <thead><tr><th>Sample No.</th><th>Serial</th><th>Result</th><th>Action</th></tr></thead>
+                <tbody>
+                  {sampleUnits.map((unit, index) => {
+                    const result = calculateCompleteOverallResult((items.data || []).map((item) => calculatePreviewResult({
+                      ...item,
+                      ...(drafts[unit.id]?.[item.id] || emptyDraft()),
+                    })));
+                    return (
+                      <tr key={unit.id}>
+                        <td>{index + 1}</td>
+                        <td>{unit.serial_number}</td>
+                        <td><StatusBadge value={result} /></td>
+                        <td>
+                          {!readOnly ? (
+                            <button className="iconButton dangerButton" title={`Remove ${unit.serial_number}`} aria-label={`Remove ${unit.serial_number}`} onClick={() => removeSample(unit.id)} type="button">
+                              <Trash2 size={16} />
+                            </button>
+                          ) : <span className="mutedText">Locked</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!minimumMet && sampleUnits.length ? (
+            <div className="transactionHint">Add {minimumRequired - sampleUnits.length} more sample(s) before Submit.</div>
+          ) : null}
+        </section>
+
         <section className="panel" ref={samplingFormRef}>
           <h2>QA Sampling Form</h2>
           {!sampleUnits.length ? <EmptyState message="Select one or more serials to create or continue QA sampling" /> : (
@@ -579,16 +657,12 @@ export function QaLotSamplingPage() {
                 <div className="kvGrid">
                   <div><dt>Samples</dt><dd>{sampleUnits.length}</dd></div>
                   <div><dt>Status</dt><dd><StatusBadge value={currentStatus} /></dd></div>
-                  <div><dt>Preview</dt><dd><StatusBadge value={detail.data?.overall_result || overallPreview} /></dd></div>
+                  <div><dt>Preview</dt><dd><StatusBadge value={readOnly ? (detail.data?.overall_result || overallPreview) : overallPreview} /></dd></div>
                   <div><dt>QA Sampling ID</dt><dd>{activeQaSamplingId || '-'}</dd></div>
                 </div>
 
                 <div className="formGrid">
                   <label>Sampling No<input disabled readOnly value={samplingNo} /></label>
-                </div>
-
-                <div className="serialPreview">
-                  {sampleUnits.map((unit) => <span key={unit.id}>{unit.serial_number}{!readOnly ? <button aria-label={`Remove ${unit.serial_number}`} onClick={() => removeSample(unit.id)} type="button">x</button> : null}</span>)}
                 </div>
 
                 <EquipmentCheckPanel check={equipmentCheck.data || null} />
@@ -597,7 +671,7 @@ export function QaLotSamplingPage() {
                 {items.isLoading ? <LoadingPanel /> : null}
                 {items.data?.length ? sampleUnits.map((unit) => (
                   <div className="sampleGrid" key={unit.id}>
-                    <h2>{unit.serial_number} <StatusBadge value={calculateOverallResult((items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[unit.id]?.[item.id] || emptyDraft()) })))} /></h2>
+                    <h2>{unit.serial_number} <StatusBadge value={calculateCompleteOverallResult((items.data || []).map((item) => calculatePreviewResult({ ...item, ...(drafts[unit.id]?.[item.id] || emptyDraft()) })))} /></h2>
                     <ResultGrid readOnly={readOnly} items={items.data || []} values={drafts[unit.id] || {}} onChange={(itemId, value) => setDrafts({ ...drafts, [unit.id]: { ...(drafts[unit.id] || {}), [itemId]: value } })} />
                   </div>
                 )) : <EmptyState message="Select a template to enter QA sample results" />}
