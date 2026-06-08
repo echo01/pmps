@@ -39,7 +39,12 @@ export type QcSerialStatus = {
 };
 
 export type QcLotInspectionStatus = {
-  lot: TransactionLot;
+  lot: TransactionLot & {
+    qc_status: QcLotSearchRow['qc_status'];
+    qc_result: QcLotSearchRow['qc_result'];
+    started_count: number;
+    approved_count: number;
+  };
   summary: {
     not_started: number;
     draft: number;
@@ -50,6 +55,16 @@ export type QcLotInspectionStatus = {
     edit_requested: number;
   };
   serials: QcSerialStatus[];
+};
+
+export type QcLotSearchRow = TransactionLot & {
+  production_lot_status: string;
+  qc_status: 'NOT_STARTED' | 'IN_PROGRESS' | 'DRAFT' | 'SUBMITTED' | 'REVIEWED' | 'APPROVED' | 'REJECTED' | 'EDIT_REQUESTED';
+  started_count: number;
+  approved_count: number;
+  pass_count: number;
+  fail_count: number;
+  qc_result: 'PASS' | 'FAIL' | 'N/A';
 };
 
 export type TransactionTemplate = {
@@ -183,6 +198,16 @@ export type EquipmentCheck = {
   };
 };
 
+export type QcBulkWorkflowAction = 'SUBMIT' | 'REVIEW' | 'APPROVE';
+
+export type QcBulkWorkflowResult = {
+  action: QcBulkWorkflowAction;
+  from_status: string;
+  to_status: string;
+  processed_count: number;
+  inspection_ids: number[];
+};
+
 function flattenTemplateSections(sections: TemplateSection[]) {
   return sections.flatMap((section) => section.items.map((item) => ({
     ...item,
@@ -194,7 +219,7 @@ function flattenTemplateSections(sections: TemplateSection[]) {
 
 export const qcApi = {
   async getLots(params: Record<string, QueryValue> = {}) {
-    return (await httpClient.get<TransactionLot[]>(`/qc/lots${toQueryString(params)}`)).data;
+    return (await httpClient.get<QcLotSearchRow[]>(`/qc/lots${toQueryString(params)}`)).data;
   },
   async getLotUnits(lotId: string | number) {
     return (await httpClient.get<TransactionUnit[]>(`/qc/lots/${lotId}/units`)).data;
@@ -228,6 +253,14 @@ export const qcApi = {
   },
   async approve(id: string | number, remark?: string) {
     return (await httpClient.post<QcInspection>(`/qc/inspections/${id}/approve`, { remark })).data;
+  },
+  async bulkWorkflow(payload: {
+    action: QcBulkWorkflowAction;
+    inspection_ids?: number[];
+    lot_id?: number;
+    remark?: string;
+  }) {
+    return (await httpClient.post<QcBulkWorkflowResult>('/qc/inspections/bulk-workflow', payload)).data;
   },
   async reject(id: string | number, remark: string) {
     return (await httpClient.post<QcInspection>(`/qc/inspections/${id}/reject`, { remark })).data;

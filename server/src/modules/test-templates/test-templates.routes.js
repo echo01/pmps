@@ -5,6 +5,10 @@ const {
   postTemplate,
   getTemplateById,
   putTemplate,
+  deleteTemplateById,
+  postDuplicateTemplate,
+  getTemplateModels,
+  putTemplateModels,
   getSections,
   postSection,
   putSection,
@@ -25,6 +29,10 @@ router.get('/test-templates', testTemplateAccess, getTemplates);
 router.post('/test-templates', testTemplateAccess, postTemplate);
 router.get('/test-templates/:id', testTemplateAccess, getTemplateById);
 router.put('/test-templates/:id', testTemplateAccess, putTemplate);
+router.delete('/test-templates/:id', testTemplateAccess, deleteTemplateById);
+router.post('/test-templates/:id/duplicate', testTemplateAccess, postDuplicateTemplate);
+router.get('/test-templates/:id/models', testTemplateAccess, getTemplateModels);
+router.put('/test-templates/:id/models', testTemplateAccess, putTemplateModels);
 
 router.get('/test-templates/:templateId/sections', testTemplateAccess, getSections);
 router.post('/test-templates/:templateId/sections', testTemplateAccess, postSection);

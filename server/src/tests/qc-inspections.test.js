@@ -28,7 +28,11 @@ const state = {
   booleanItemId: null,
   lotId: null,
   productUnitId: null,
+  secondProductUnitId: null,
+  secondSerialNumber: null,
   inspectionId: null,
+  bySerialInspectionId: null,
+  bulkSecondInspectionId: null,
 };
 
 async function request(method, path, { token, body } = {}) {
@@ -243,6 +247,8 @@ describe('Sprint 5 QC Inspection integration', () => {
     assert.equal(units.status, 200);
     assert.equal(units.body.data.length, 2);
     state.productUnitId = units.body.data[0].id;
+    state.secondProductUnitId = units.body.data[1].id;
+    state.secondSerialNumber = units.body.data[1].serial_number;
   });
 
   after(async () => {
@@ -369,7 +375,12 @@ describe('Sprint 5 QC Inspection integration', () => {
 
     assert.equal(lots.status, 200);
     assert.ok(lots.body.data.some((row) => row.id === state.lotId));
-    assert.equal(lots.body.data.find((row) => row.id === state.lotId).serial_count, 2);
+    const lotRow = lots.body.data.find((row) => row.id === state.lotId);
+    assert.equal(lotRow.serial_count, 2);
+    assert.equal(lotRow.production_lot_status, 'OPEN');
+    assert.equal(lotRow.qc_status, 'NOT_STARTED');
+    assert.equal(lotRow.approved_count, 0);
+    assert.equal(lotRow.qc_result, 'N/A');
 
     const units = await request('GET', `/api/qc/lots/${state.lotId}/units`, {
       token: adminToken,
@@ -391,6 +402,8 @@ describe('Sprint 5 QC Inspection integration', () => {
     assert.ok(response.body.data.serials.some((row) => row.product_unit_id === state.productUnitId));
     assert.ok(response.body.data.serials.every((row) => row.qc_status === 'NOT_STARTED'));
     assert.equal(response.body.data.summary.not_started, 2);
+    assert.equal(response.body.data.lot.qc_status, 'NOT_STARTED');
+    assert.equal(response.body.data.lot.qc_result, 'N/A');
   });
 
   it('lists INSPECTION templates and grouped template items', async () => {
@@ -411,6 +424,38 @@ describe('Sprint 5 QC Inspection integration', () => {
     assert.equal(items.body.data.length, 1);
     assert.equal(items.body.data[0].items.length, 2);
     assert.ok(items.body.data[0].items.some((row) => row.id === state.numericItemId));
+  });
+
+  it('creates QC inspection by lot_number and serial_number using first assigned template by default', async () => {
+    const response = await request('POST', '/api/qc/inspections/by-serial', {
+      token: adminToken,
+      body: {
+        lot_number: `S5-LOT-${codeSuffix}`,
+        serial_number: state.secondSerialNumber,
+        station_name: 'QC-STATION-BY-SERIAL',
+        equipment_ids: [state.equipmentId],
+        items: [
+          {
+            item_code: 'VOLTAGE',
+            measured_value: 230,
+          },
+          {
+            item_code: 'POWER_LED',
+            measured_text: 'OK',
+          },
+        ],
+        remark: 'Sprint 5 QC by serial test',
+      },
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.data.product_unit_id, state.secondProductUnitId);
+    assert.equal(response.body.data.serial_number, state.secondSerialNumber);
+    assert.equal(response.body.data.template_id, state.templateId);
+    assert.equal(response.body.data.inspection_no, 2);
+    assert.equal(response.body.data.status, 'DRAFT');
+    assert.equal(response.body.data.overall_result, 'PASS');
+    state.bySerialInspectionId = response.body.data.id;
   });
 
   it('creates QC inspection with calculated details and equipment in one transaction', async () => {
@@ -439,8 +484,21 @@ describe('Sprint 5 QC Inspection integration', () => {
     assert.equal(inspectedSerial.inspection_id, state.inspectionId);
     assert.equal(inspectedSerial.qc_status, 'DRAFT');
     assert.equal(inspectedSerial.overall_result, 'PASS');
-    assert.equal(response.body.data.summary.draft, 1);
-    assert.equal(response.body.data.summary.not_started, 1);
+    assert.equal(response.body.data.summary.draft, 2);
+    assert.equal(response.body.data.summary.not_started, 0);
+    assert.equal(response.body.data.lot.qc_status, 'DRAFT');
+    assert.equal(response.body.data.lot.qc_result, 'N/A');
+
+    const draftLots = await request(
+      'GET',
+      `/api/qc/lots?status=DRAFT&lot_number=${encodeURIComponent(`S5-LOT-${codeSuffix}`)}`,
+      { token: adminToken }
+    );
+    assert.equal(draftLots.status, 200);
+    assert.equal(draftLots.body.data.length, 1);
+    assert.equal(draftLots.body.data[0].qc_status, 'DRAFT');
+    assert.equal(draftLots.body.data[0].started_count, 2);
+    assert.equal(draftLots.body.data[0].approved_count, 0);
   });
 
   it('duplicate QC inspection returns 409', async () => {
@@ -548,6 +606,7 @@ describe('Sprint 5 QC Inspection integration', () => {
     });
 
     assert.equal(created.status, 201);
+    state.bulkSecondInspectionId = created.body.data.id;
 
     await pool.query(
       `
@@ -576,6 +635,67 @@ describe('Sprint 5 QC Inspection integration', () => {
       `,
       [state.equipmentId]
     );
+  });
+
+  it('bulk submits selected inspections, reviews the eligible lot, and approves selected inspections', async () => {
+    const inspectionIds = [state.bySerialInspectionId, state.bulkSecondInspectionId];
+
+    const submitted = await request('POST', '/api/qc/inspections/bulk-workflow', {
+      token: adminToken,
+      body: {
+        action: 'SUBMIT',
+        inspection_ids: inspectionIds,
+        remark: 'Bulk submit selected QC inspections',
+      },
+    });
+
+    assert.equal(submitted.status, 200);
+    assert.equal(submitted.body.data.processed_count, 2);
+    assert.deepEqual(submitted.body.data.inspection_ids.sort((a, b) => a - b), inspectionIds.sort((a, b) => a - b));
+
+    const reviewed = await request('POST', '/api/qc/inspections/bulk-workflow', {
+      token: adminToken,
+      body: {
+        action: 'REVIEW',
+        lot_id: state.lotId,
+        remark: 'Bulk review all submitted QC inspections in lot',
+      },
+    });
+
+    assert.equal(reviewed.status, 200);
+    assert.equal(reviewed.body.data.processed_count, 2);
+
+    const approved = await request('POST', '/api/qc/inspections/bulk-workflow', {
+      token: adminToken,
+      body: {
+        action: 'APPROVE',
+        inspection_ids: inspectionIds,
+        remark: 'Bulk approve selected QC inspections',
+      },
+    });
+
+    assert.equal(approved.status, 200);
+    assert.equal(approved.body.data.processed_count, 2);
+
+    const lotStatus = await request('GET', `/api/qc/lots/${state.lotId}/inspection-status`, {
+      token: adminToken,
+    });
+    assert.equal(lotStatus.status, 200);
+    assert.equal(lotStatus.body.data.summary.approved, 2);
+    assert.equal(lotStatus.body.data.lot.qc_status, 'APPROVED');
+    assert.equal(lotStatus.body.data.lot.qc_result, 'PASS');
+
+    const approvedLots = await request(
+      'GET',
+      `/api/qc/lots?status=APPROVED&lot_number=${encodeURIComponent(`S5-LOT-${codeSuffix}`)}`,
+      { token: adminToken }
+    );
+    assert.equal(approvedLots.status, 200);
+    assert.equal(approvedLots.body.data.length, 1);
+    assert.equal(approvedLots.body.data[0].production_lot_status, 'OPEN');
+    assert.equal(approvedLots.body.data[0].qc_status, 'APPROVED');
+    assert.equal(approvedLots.body.data[0].approved_count, 2);
+    assert.equal(approvedLots.body.data[0].qc_result, 'PASS');
   });
 
   it('reject workflow writes approval log', async () => {

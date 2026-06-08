@@ -20,6 +20,7 @@ const state = {
   categoryId: null,
   subCategoryId: null,
   modelId: null,
+  secondModelId: null,
   equipmentTypeId: null,
   equipmentId: null,
   requiredEquipmentId: null,
@@ -195,6 +196,20 @@ describe('Sprint 3 Master Data integration', () => {
 
     assert.equal(lookup.status, 200);
     assert.ok(lookup.body.data.some((row) => row.id === state.modelId));
+
+    const secondModel = await request('POST', '/api/product-models', {
+      token: adminToken,
+      body: {
+        sub_category_id: state.subCategoryId,
+        model_code: `S3M-${codeSuffix}-B`,
+        product_name: 'Sprint3 Second Model',
+        model_name: 'Sprint3 Second Model Name',
+        active: true,
+      },
+    });
+
+    assert.equal(secondModel.status, 201);
+    state.secondModelId = secondModel.body.data.id;
   });
 
   it('creates Equipment Type and Equipment with calibration status', async () => {
@@ -276,7 +291,6 @@ describe('Sprint 3 Master Data integration', () => {
     const template = await request('POST', '/api/test-templates', {
       token: adminToken,
       body: {
-        model_id: state.modelId,
         template_type: 'INSPECTION',
         template_name: `Sprint3 Template ${suffix}`,
         revision: 'A',
@@ -286,6 +300,26 @@ describe('Sprint 3 Master Data integration', () => {
 
     assert.equal(template.status, 201);
     state.templateId = template.body.data.id;
+    assert.equal(template.body.data.model_id, null);
+
+    const assigned = await request('PUT', `/api/test-templates/${state.templateId}/models`, {
+      token: adminToken,
+      body: {
+        model_ids: [state.modelId, state.secondModelId],
+        primary_model_id: state.modelId,
+      },
+    });
+
+    assert.equal(assigned.status, 200);
+    assert.equal(assigned.body.data.length, 2);
+    assert.ok(assigned.body.data.some((row) => row.id === state.secondModelId));
+
+    const filtered = await request('GET', `/api/test-templates?model_id=${state.secondModelId}`, {
+      token: adminToken,
+    });
+
+    assert.equal(filtered.status, 200);
+    assert.ok(filtered.body.data.some((row) => row.id === state.templateId));
 
     const section = await request(
       'POST',
@@ -328,5 +362,84 @@ describe('Sprint 3 Master Data integration', () => {
     assert.equal(items.status, 200);
     assert.equal(items.body.data.length, 1);
     assert.equal(items.body.data[0].items[0].id, state.itemId);
+
+    const qcTemplates = await request('GET', `/api/qc/models/${state.secondModelId}/templates`, {
+      token: adminToken,
+    });
+
+    assert.equal(qcTemplates.status, 200);
+    assert.ok(qcTemplates.body.data.some((row) => row.id === state.templateId));
+  });
+
+  it('duplicates test template with sections, items, and model assignments', async () => {
+    const duplicated = await request('POST', `/api/test-templates/${state.templateId}/duplicate`, {
+      token: adminToken,
+      body: {
+        template_name: `Sprint3 Template Copy ${suffix}`,
+        revision: 'A-COPY',
+        active: true,
+        copy_models: true,
+      },
+    });
+
+    assert.equal(duplicated.status, 201);
+    assert.equal(duplicated.body.data.template_name, `Sprint3 Template Copy ${suffix}`);
+    assert.notEqual(duplicated.body.data.id, state.templateId);
+
+    const copiedItems = await request('GET', `/api/test-templates/${duplicated.body.data.id}/items`, {
+      token: adminToken,
+    });
+
+    assert.equal(copiedItems.status, 200);
+    assert.equal(copiedItems.body.data.length, 1);
+    assert.equal(copiedItems.body.data[0].section_name, 'Electrical Test');
+    assert.equal(copiedItems.body.data[0].items.length, 1);
+    assert.equal(copiedItems.body.data[0].items[0].item_code, 'VOLTAGE');
+
+    const copiedModels = await request('GET', `/api/test-templates/${duplicated.body.data.id}/models`, {
+      token: adminToken,
+    });
+
+    assert.equal(copiedModels.status, 200);
+    assert.equal(copiedModels.body.data.length, 2);
+    assert.ok(copiedModels.body.data.some((row) => row.id === state.modelId && row.is_primary));
+    assert.ok(copiedModels.body.data.some((row) => row.id === state.secondModelId));
+  });
+
+  it('deletes unused test template with assignments and rejects reading it afterwards', async () => {
+    const template = await request('POST', '/api/test-templates', {
+      token: adminToken,
+      body: {
+        template_type: 'QA',
+        template_name: `Sprint3 Delete Template ${suffix}`,
+        revision: 'A',
+        active: true,
+      },
+    });
+
+    assert.equal(template.status, 201);
+
+    const assigned = await request('PUT', `/api/test-templates/${template.body.data.id}/models`, {
+      token: adminToken,
+      body: {
+        model_ids: [state.modelId],
+        primary_model_id: state.modelId,
+      },
+    });
+
+    assert.equal(assigned.status, 200);
+
+    const deleted = await request('DELETE', `/api/test-templates/${template.body.data.id}`, {
+      token: adminToken,
+    });
+
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.data.id, template.body.data.id);
+
+    const missing = await request('GET', `/api/test-templates/${template.body.data.id}`, {
+      token: adminToken,
+    });
+
+    assert.equal(missing.status, 404);
   });
 });

@@ -1,10 +1,21 @@
 const {
   calculateItemResult,
-  calculateOverallResult,
 } = require('../qc-inspections/qc-result-calculator');
 
 function calculateUnitResult(calculatedItems) {
-  return calculateOverallResult(calculatedItems);
+  if (!calculatedItems.length) {
+    return 'N/A';
+  }
+
+  if (calculatedItems.some((item) => item.result === 'FAIL')) {
+    return 'FAIL';
+  }
+
+  if (calculatedItems.every((item) => item.result === 'PASS')) {
+    return 'PASS';
+  }
+
+  return 'N/A';
 }
 
 function calculateSamplingOverallResult(sampleUnits) {

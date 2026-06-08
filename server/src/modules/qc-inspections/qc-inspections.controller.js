@@ -2,9 +2,11 @@ const { createdResponse, successResponse } = require('../../shared/response');
 const { parsePayload, parsePositiveInt } = require('../../shared/query');
 const {
   saveQcInspectionSchema,
+  saveQcInspectionBySerialSchema,
   updateQcInspectionSchema,
   workflowRemarkSchema,
   rejectWorkflowSchema,
+  bulkWorkflowSchema,
   editRequestSchema,
   applyApprovedResultEditSchema,
 } = require('./qc-inspections.schema');
@@ -15,6 +17,7 @@ const {
   listQcTemplatesByModel,
   getQcTemplateItems: getQcTemplateItemsService,
   createQcInspection,
+  createQcInspectionBySerial,
   updateQcInspection,
   getQcInspection,
   checkQcInspectionEquipment,
@@ -22,6 +25,7 @@ const {
   reviewQcInspection,
   approveQcInspection,
   rejectQcInspection,
+  bulkQcInspectionWorkflow,
   requestQcInspectionEdit,
   applyQcInspectionEdit,
   getQcInspectionEditHistory: getQcInspectionEditHistoryService,
@@ -124,6 +128,23 @@ async function postQcInspection(req, res, next) {
 
     return createdResponse(res, {
       message: 'QC inspection created successfully',
+      data: inspection,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function postQcInspectionBySerial(req, res, next) {
+  try {
+    const inspection = await createQcInspectionBySerial({
+      payload: parsePayload(saveQcInspectionBySerialSchema, req.body),
+      userId: req.user.id,
+      requestId: req.requestId,
+    });
+
+    return createdResponse(res, {
+      message: 'QC inspection created by serial successfully',
       data: inspection,
     });
   } catch (error) {
@@ -252,6 +273,23 @@ async function postRejectQcInspection(req, res, next) {
   }
 }
 
+async function postBulkQcInspectionWorkflow(req, res, next) {
+  try {
+    const result = await bulkQcInspectionWorkflow({
+      payload: parsePayload(bulkWorkflowSchema, req.body),
+      userId: req.user.id,
+      requestId: req.requestId,
+    });
+
+    return successResponse(res, {
+      message: `QC inspections ${result.action.toLowerCase()} completed successfully`,
+      data: result,
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 async function postQcInspectionEditRequest(req, res, next) {
   try {
     const inspection = await requestQcInspectionEdit({
@@ -311,6 +349,7 @@ module.exports = {
   getQcTemplates,
   getQcTemplateItems,
   postQcInspection,
+  postQcInspectionBySerial,
   getQcInspectionById,
   putQcInspection,
   getQcEquipmentCheck,
@@ -318,6 +357,7 @@ module.exports = {
   postReviewQcInspection,
   postApproveQcInspection,
   postRejectQcInspection,
+  postBulkQcInspectionWorkflow,
   postQcInspectionEditRequest,
   postApplyQcInspectionEdit,
   getQcInspectionEditHistory,

@@ -315,6 +315,45 @@ describe('Sprint 4 Production Lot integration', () => {
     assert.equal(updated.body.data.remark, 'Sprint 4 updated lot');
   });
 
+  it('increases and decreases lot quantity with serial workflow cleanup', async () => {
+    const increased = await request('PUT', `/api/production-lots/${state.lotId}`, {
+      token: adminToken,
+      body: {
+        lot_qty: 5,
+        serial_generation: {
+          prefix: `S4${codeSuffix}-ADD-`,
+          start_number: 1,
+          count: 2,
+          padding: 3,
+        },
+      },
+    });
+
+    assert.equal(increased.status, 200);
+    assert.equal(increased.body.data.lot_qty, 5);
+    assert.equal(increased.body.data.serial_count, 5);
+    assert.equal(increased.body.data.added_serials.length, 2);
+
+    const reduced = await request('PUT', `/api/production-lots/${state.lotId}`, {
+      token: adminToken,
+      body: {
+        lot_qty: 2,
+      },
+    });
+
+    assert.equal(reduced.status, 200);
+    assert.equal(reduced.body.data.lot_qty, 2);
+    assert.equal(reduced.body.data.serial_count, 2);
+    assert.equal(reduced.body.data.removed_serials.length, 3);
+
+    const serials = await request('GET', `/api/production-lots/${state.lotId}/serials`, {
+      token: adminToken,
+    });
+
+    assert.equal(serials.status, 200);
+    assert.equal(serials.body.data.length, 2);
+  });
+
   it('rejects duplicate lot number for same model', async () => {
     const response = await request('POST', '/api/production-lots', {
       token: adminToken,
@@ -367,6 +406,138 @@ describe('Sprint 4 Production Lot integration', () => {
 
     assert.equal(response.status, 200);
     assert.ok(response.body.data.some((row) => row.id === state.lotId));
+  });
+
+  it('deletes production lot with QC, QA, audit, serial, ECN, and planning records', async () => {
+    const created = await request('POST', '/api/production-lots', {
+      token: adminToken,
+      body: createLotPayload({
+        lot_number: `S4-DELETE-${codeSuffix}`,
+        lot_qty: 1,
+        serial_generation: {
+          prefix: `S4${codeSuffix}-DELETE-`,
+          start_number: 1,
+          count: 1,
+          padding: 3,
+        },
+        ecn_ids: [state.ecnId],
+      }),
+    });
+
+    assert.equal(created.status, 201);
+    const deleteLotId = created.body.data.lot.id;
+    const unitId = created.body.data.serials[0].id;
+
+    const template = await pool.query(
+      `
+        INSERT INTO test_template (
+          model_id, template_type, template_name, revision, effective_from, active, created_at, updated_at
+        )
+        VALUES ($1, 'INSPECTION', $2, 'REV.00', '2026-06-01', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
+      `,
+      [state.modelId, `S4 Delete Template ${codeSuffix}`]
+    );
+    assert.ok(template.rows[0]?.id);
+
+    const admin = await pool.query(
+      `SELECT id FROM app_user WHERE username = 'admin'`
+    );
+    const templateId = template.rows[0].id;
+    const adminId = admin.rows[0].id;
+
+    const inspection = await pool.query(
+      `
+        INSERT INTO inspection_header (
+          product_unit_id, template_id, inspection_no, status, overall_result, created_at, updated_at
+        )
+        VALUES ($1, $2, 1, 'DRAFT', 'N/A', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
+      `,
+      [unitId, templateId]
+    );
+
+    const sampling = await pool.query(
+      `
+        INSERT INTO qa_sampling_header (
+          lot_id, template_id, sampling_round, lot_qty, sample_qty,
+          accept_qty, reject_qty, status, overall_result, created_at, updated_at
+        )
+        VALUES ($1, $2, 1, 1, 1, 0, 0, 'DRAFT', 'N/A', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        RETURNING id
+      `,
+      [deleteLotId, templateId]
+    );
+
+    await pool.query(
+      `
+        INSERT INTO qa_sample_unit (
+          qa_sampling_id, product_unit_id, sample_no, serial_number, unit_result, updated_at
+        )
+        VALUES ($1, $2, 1, $3, 'N/A', CURRENT_TIMESTAMP)
+      `,
+      [sampling.rows[0].id, unitId, created.body.data.serials[0].serial_number]
+    );
+
+    await pool.query(
+      `
+        INSERT INTO result_edit_audit_log (
+          source_type, source_id, edit_reason, edit_by, approval_status
+        )
+        VALUES
+          ('QC', $1, 'Delete cascade test', $3, 'REQUESTED'),
+          ('QA', $2, 'Delete cascade test', $3, 'REQUESTED')
+      `,
+      [inspection.rows[0].id, sampling.rows[0].id, adminId]
+    );
+
+    await pool.query(
+      `
+        INSERT INTO lot_test_plan (
+          lot_id, plan_code, plan_name, planned_start_date, planned_end_date,
+          planned_start_datetime, planned_end_datetime,
+          plan_status, created_by, updated_by
+        )
+        VALUES (
+          $1, $2, 'Delete cascade plan', '2026-06-02', '2026-06-03',
+          '2026-06-02T08:00:00+07:00', '2026-06-03T17:00:00+07:00',
+          'PLANNED', $3, $3
+        )
+      `,
+      [deleteLotId, `S4-DEL-PLAN-${codeSuffix}`, adminId]
+    );
+
+    const deleted = await request('DELETE', `/api/production-lots/${deleteLotId}`, {
+      token: adminToken,
+    });
+
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.data.id, deleteLotId);
+
+    const remaining = await pool.query(
+      `
+        SELECT
+          (SELECT COUNT(*) FROM production_lot WHERE id = $1)::int AS lots,
+          (SELECT COUNT(*) FROM product_unit WHERE lot_id = $1)::int AS units,
+          (SELECT COUNT(*) FROM qa_sampling_header WHERE lot_id = $1)::int AS qa,
+          (SELECT COUNT(*) FROM lot_test_plan WHERE lot_id = $1)::int AS plans,
+          (
+            SELECT COUNT(*)
+            FROM result_edit_audit_log
+            WHERE (source_type = 'QC' AND source_id = $2)
+               OR (source_type = 'QA' AND source_id = $3)
+          )::int AS audits
+      `,
+      [deleteLotId, inspection.rows[0].id, sampling.rows[0].id]
+    );
+
+    assert.deepEqual(remaining.rows[0], {
+      lots: 0,
+      units: 0,
+      qa: 0,
+      plans: 0,
+      audits: 0,
+    });
   });
 
   it('GET /api/production-lots without token returns 401', async () => {

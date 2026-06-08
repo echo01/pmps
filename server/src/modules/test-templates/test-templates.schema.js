@@ -5,7 +5,7 @@ const templateTypeSchema = z.enum(['INSPECTION', 'QA']);
 const checkTypeSchema = z.enum(['NUMERIC', 'BOOLEAN', 'TEXT']);
 
 const createTemplateSchema = z.object({
-  model_id: z.number().int().positive(),
+  model_id: z.number().int().positive().optional().nullable(),
   template_type: templateTypeSchema,
   template_name: z.string().min(2).max(200),
   revision: z.string().min(1).max(50).optional(),
@@ -13,6 +13,21 @@ const createTemplateSchema = z.object({
   effective_from: dateString.optional().nullable(),
   effective_to: dateString.optional().nullable(),
   active: z.boolean().optional(),
+});
+
+const duplicateTemplateSchema = z.object({
+  template_name: z.string().min(2).max(200),
+  revision: z.string().min(1).max(50).optional(),
+  revision_note: z.string().max(500).optional().nullable(),
+  effective_from: dateString.optional().nullable(),
+  effective_to: dateString.optional().nullable(),
+  active: z.boolean().optional(),
+  copy_models: z.boolean().optional(),
+});
+
+const assignTemplateModelsSchema = z.object({
+  model_ids: z.array(z.number().int().positive()).min(1),
+  primary_model_id: z.number().int().positive().optional().nullable(),
 });
 
 const updateTemplateSchema = createTemplateSchema.partial().refine(
@@ -75,6 +90,8 @@ const updateItemSchema = baseItemSchema.partial().refine(
 module.exports = {
   createTemplateSchema,
   updateTemplateSchema,
+  duplicateTemplateSchema,
+  assignTemplateModelsSchema,
   createSectionSchema,
   updateSectionSchema,
   createItemSchema,

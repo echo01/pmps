@@ -46,6 +46,12 @@ export function calculateOverallResult(results: PreviewResult[]): PreviewResult 
   return results.includes('FAIL') ? 'FAIL' : 'PASS';
 }
 
+export function calculateCompleteOverallResult(results: PreviewResult[]): PreviewResult {
+  if (!results.length) return 'N/A';
+  if (results.includes('FAIL')) return 'FAIL';
+  return results.every((result) => result === 'PASS') ? 'PASS' : 'N/A';
+}
+
 export function normalizeMeasuredValue(value: string) {
   return value.trim() === '' ? null : Number(value);
 }

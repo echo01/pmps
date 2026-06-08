@@ -4,6 +4,12 @@ const {
   findTemplates,
   createTemplate,
   updateTemplate,
+  countTemplateUsage,
+  deleteTemplateCascade,
+  duplicateTemplate,
+  countModelsByIds,
+  findTemplateModels,
+  replaceTemplateModels,
   findSectionById,
   findSectionsByTemplateId,
   createSection,
@@ -17,6 +23,7 @@ const {
 } = require('./test-templates.repository');
 
 const { findModelById } = require('../products/products.repository');
+const { withTransaction } = require('../../db/transaction');
 const { conflict, notFound, validationError } = require('../../shared/http-error');
 
 async function ensureModelExists(modelId) {
@@ -105,7 +112,6 @@ async function getTemplate({ id, requestId }) {
 
 async function ensureTemplateIdentityAvailable(payload, requestId, excludeId) {
   const existing = await findTemplateByIdentity({
-    modelId: payload.model_id,
     templateType: payload.template_type,
     templateName: payload.template_name,
     revision: payload.revision,
@@ -114,26 +120,69 @@ async function ensureTemplateIdentityAvailable(payload, requestId, excludeId) {
 
   if (existing) {
     console.warn('[TEST_TEMPLATE][DUPLICATE]', { requestId, templateId: existing.id });
-    throw conflict('Template already exists for this model/type/revision', [
+    throw conflict('Template already exists for this type/revision', [
       {
         field: 'template_name',
-        message: 'template_name and revision already exist for this model/type',
+        message: 'template_name and revision already exist for this type',
       },
     ]);
   }
 }
 
+function normalizeModelIds(modelIds) {
+  return [...new Set((modelIds || []).map(Number).filter((value) => Number.isInteger(value) && value > 0))];
+}
+
+async function ensureModelsExist(modelIds, client) {
+  const uniqueModelIds = normalizeModelIds(modelIds);
+
+  if (!uniqueModelIds.length) {
+    throw validationError('Validation failed', [
+      {
+        field: 'model_ids',
+        message: 'at least one model is required',
+      },
+    ]);
+  }
+
+  const count = await countModelsByIds(uniqueModelIds, client);
+
+  if (count !== uniqueModelIds.length) {
+    throw validationError('Validation failed', [
+      {
+        field: 'model_ids',
+        message: 'one or more models do not exist',
+      },
+    ]);
+  }
+
+  return uniqueModelIds;
+}
+
 async function createNewTemplate({ payload, userId, requestId }) {
   console.info('[TEST_TEMPLATE][CREATE][START]', {
     requestId,
-    modelId: payload.model_id,
+    modelId: payload.model_id || null,
     templateType: payload.template_type,
   });
 
-  await ensureModelExists(payload.model_id);
+  if (payload.model_id) {
+    await ensureModelExists(payload.model_id);
+  }
+
   await ensureTemplateIdentityAvailable(payload, requestId);
 
-  const template = await createTemplate(payload, userId);
+  const template = payload.model_id
+    ? await withTransaction(
+      async (client) => {
+        const created = await createTemplate(payload, userId, client);
+        await replaceTemplateModels(created.id, [payload.model_id], payload.model_id, client);
+        return findTemplateById(created.id, client);
+      },
+      { requestId, name: 'test-template-create-with-primary-model' }
+    )
+    : await createTemplate(payload, userId);
+
   console.info('[TEST_TEMPLATE][CREATE][SUCCESS]', { requestId, templateId: template.id });
   return template;
 }
@@ -157,6 +206,102 @@ async function updateExistingTemplate({ id, payload, requestId }) {
   const template = await updateTemplate(id, payload);
   console.info('[TEST_TEMPLATE][UPDATE][SUCCESS]', { requestId, templateId: id });
   return template;
+}
+
+async function removeTemplate({ id, requestId }) {
+  console.info('[TEST_TEMPLATE][DELETE][START]', { requestId, templateId: id });
+
+  const deleted = await withTransaction(
+    async (client) => {
+      const existing = await findTemplateById(id, client);
+
+      if (!existing) {
+        throw notFound('Test template not found');
+      }
+
+      const usage = await countTemplateUsage(id, client);
+      const totalUsage = Number(usage.qc_count || 0) + Number(usage.qa_count || 0);
+
+      if (totalUsage > 0) {
+        throw conflict('Cannot delete template because it is already used by QC/QA records', [
+          {
+            field: 'template_id',
+            message: `Template is used by ${usage.qc_count || 0} QC inspection(s) and ${usage.qa_count || 0} QA sampling(s)`,
+          },
+        ]);
+      }
+
+      return deleteTemplateCascade(id, client);
+    },
+    { requestId, name: 'test-template-delete' }
+  );
+
+  console.info('[TEST_TEMPLATE][DELETE][SUCCESS]', { requestId, templateId: id });
+  return deleted;
+}
+
+async function duplicateExistingTemplate({ id, payload, userId, requestId }) {
+  console.info('[TEST_TEMPLATE][DUPLICATE][START]', { requestId, templateId: id });
+
+  const duplicated = await withTransaction(
+    async (client) => {
+      const source = await findTemplateById(id, client);
+
+      if (!source) {
+        throw notFound('Test template not found');
+      }
+
+      await ensureTemplateIdentityAvailable({
+        template_type: source.template_type,
+        template_name: payload.template_name,
+        revision: payload.revision || source.revision || 'REV.00',
+      }, requestId);
+
+      return duplicateTemplate(id, payload, userId, client);
+    },
+    { requestId, name: 'test-template-duplicate' }
+  );
+
+  console.info('[TEST_TEMPLATE][DUPLICATE][SUCCESS]', { requestId, sourceTemplateId: id, templateId: duplicated.id });
+  return duplicated;
+}
+
+async function listTemplateModels({ templateId, requestId }) {
+  console.info('[TEST_TEMPLATE][MODEL_LIST][START]', { requestId, templateId });
+  await ensureTemplateExists(templateId);
+  const models = await findTemplateModels(templateId);
+  console.info('[TEST_TEMPLATE][MODEL_LIST][SUCCESS]', { requestId, templateId, count: models.length });
+  return models;
+}
+
+async function updateTemplateModels({ templateId, payload, requestId }) {
+  console.info('[TEST_TEMPLATE][MODEL_ASSIGN][START]', {
+    requestId,
+    templateId,
+    modelCount: payload.model_ids?.length || 0,
+  });
+
+  const models = await withTransaction(
+    async (client) => {
+      const template = await findTemplateById(templateId, client);
+
+      if (!template) {
+        throw notFound('Test template not found');
+      }
+
+      const modelIds = await ensureModelsExist(payload.model_ids, client);
+      const primaryModelId = payload.primary_model_id && modelIds.includes(payload.primary_model_id)
+        ? payload.primary_model_id
+        : modelIds[0];
+
+      await updateTemplate(templateId, { model_id: primaryModelId }, client);
+      return replaceTemplateModels(templateId, modelIds, primaryModelId, client);
+    },
+    { requestId, name: 'test-template-model-assignment' }
+  );
+
+  console.info('[TEST_TEMPLATE][MODEL_ASSIGN][SUCCESS]', { requestId, templateId, count: models.length });
+  return models;
 }
 
 async function listSections({ templateId, requestId }) {
@@ -276,6 +421,10 @@ module.exports = {
   getTemplate,
   createNewTemplate,
   updateExistingTemplate,
+  removeTemplate,
+  duplicateExistingTemplate,
+  listTemplateModels,
+  updateTemplateModels,
   listSections,
   createNewSection,
   updateExistingSection,

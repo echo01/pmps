@@ -30,7 +30,9 @@ const updateProductionLotSchema = z
   .object({
     production_date: dateSchema.optional().nullable(),
     remark: z.string().trim().max(500).optional().nullable(),
-    status: z.enum(['OPEN', 'CLOSED', 'HOLD', 'CANCELLED']).optional(),
+    status: z.enum(['OPEN', 'COMPLETED', 'CLOSED', 'HOLD', 'CANCELLED']).optional(),
+    lot_qty: z.coerce.number().int().positive().max(5000).optional(),
+    serial_generation: serialGenerationSchema.optional(),
   })
   .strict()
   .refine((payload) => Object.keys(payload).length > 0, {

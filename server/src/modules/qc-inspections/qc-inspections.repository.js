@@ -6,61 +6,109 @@ function executor(client) {
 
 async function findQcLots({ search, model_code, lot_number, status, date_from, date_to } = {}) {
   const values = [];
-  const where = status ? [] : [`pl.status <> 'CANCELLED'`];
+  const where = [`production_lot_status <> 'CANCELLED'`];
 
   if (search) {
     values.push(`%${search}%`);
     where.push(`(
-      pl.lot_number ILIKE $${values.length}
-      OR pm.model_code ILIKE $${values.length}
-      OR pm.product_name ILIKE $${values.length}
+      lot_number ILIKE $${values.length}
+      OR model_code ILIKE $${values.length}
+      OR product_name ILIKE $${values.length}
     )`);
   }
 
   if (model_code) {
     values.push(`%${model_code}%`);
-    where.push(`pm.model_code ILIKE $${values.length}`);
+    where.push(`model_code ILIKE $${values.length}`);
   }
 
   if (lot_number) {
     values.push(`%${lot_number}%`);
-    where.push(`pl.lot_number ILIKE $${values.length}`);
+    where.push(`lot_number ILIKE $${values.length}`);
   }
 
   if (status) {
     values.push(status);
-    where.push(`pl.status = $${values.length}`);
+    where.push(`qc_status = $${values.length}`);
   }
 
   if (date_from) {
     values.push(date_from);
-    where.push(`pl.production_date >= $${values.length}`);
+    where.push(`production_date >= $${values.length}`);
   }
 
   if (date_to) {
     values.push(date_to);
-    where.push(`pl.production_date <= $${values.length}`);
+    where.push(`production_date <= $${values.length}`);
   }
 
   const result = await pool.query(
     `
+      WITH qc_lots AS (
+        SELECT
+          pl.id,
+          pl.lot_number,
+          pl.model_id,
+          pm.model_code,
+          pm.product_name,
+          pl.lot_qty,
+          progress.serial_count,
+          pl.status AS production_lot_status,
+          CASE
+            WHEN progress.started_count = 0 THEN 'NOT_STARTED'
+            WHEN progress.approved_count = progress.serial_count THEN 'APPROVED'
+            WHEN progress.edit_requested_count > 0 THEN 'EDIT_REQUESTED'
+            WHEN progress.rejected_count > 0 THEN 'REJECTED'
+            WHEN progress.reviewed_count > 0 THEN 'REVIEWED'
+            WHEN progress.submitted_count > 0 THEN 'SUBMITTED'
+            WHEN progress.draft_count > 0 THEN 'DRAFT'
+            ELSE 'IN_PROGRESS'
+          END AS qc_status,
+          progress.started_count,
+          progress.approved_count,
+          progress.pass_count,
+          progress.fail_count,
+          CASE
+            WHEN progress.approved_count <> progress.serial_count THEN 'N/A'
+            WHEN progress.fail_count > 0 THEN 'FAIL'
+            WHEN progress.pass_count = progress.serial_count THEN 'PASS'
+            ELSE 'N/A'
+          END AS qc_result,
+          pl.production_date,
+          pl.created_at
+        FROM production_lot pl
+        JOIN product_model pm ON pm.id = pl.model_id
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::int AS serial_count,
+            COUNT(latest.inspection_id)::int AS started_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'DRAFT')::int AS draft_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'SUBMITTED')::int AS submitted_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'REVIEWED')::int AS reviewed_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'APPROVED')::int AS approved_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'REJECTED')::int AS rejected_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'EDIT_REQUESTED')::int AS edit_requested_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'APPROVED' AND latest.overall_result = 'PASS')::int AS pass_count,
+            COUNT(*) FILTER (WHERE latest.qc_status = 'APPROVED' AND latest.overall_result = 'FAIL')::int AS fail_count
+          FROM product_unit lot_unit
+          LEFT JOIN LATERAL (
+            SELECT
+              ih.id AS inspection_id,
+              ih.status AS qc_status,
+              ih.overall_result
+            FROM inspection_header ih
+            WHERE ih.product_unit_id = lot_unit.id
+            ORDER BY ih.inspection_no DESC, ih.id DESC
+            LIMIT 1
+          ) latest ON true
+          WHERE lot_unit.lot_id = pl.id
+        ) progress ON true
+      )
       SELECT
-        pl.id,
-        pl.lot_number,
-        pl.model_id,
-        pm.model_code,
-        pm.product_name,
-        pl.lot_qty,
-        COUNT(pu.id)::int AS serial_count,
-        pl.status,
-        pl.production_date,
-        pl.created_at
-      FROM production_lot pl
-      JOIN product_model pm ON pm.id = pl.model_id
-      LEFT JOIN product_unit pu ON pu.lot_id = pl.id
+        *
+      FROM qc_lots
       WHERE ${where.join(' AND ')}
-      GROUP BY pl.id, pm.id
-      ORDER BY pl.production_date DESC NULLS LAST, pl.created_at DESC, pl.id DESC
+      ORDER BY production_date DESC NULLS LAST, created_at DESC, id DESC
       LIMIT 100
     `,
     values
@@ -160,19 +208,20 @@ async function findInspectionTemplatesByModelId(modelId) {
   const result = await pool.query(
     `
       SELECT
-        id,
-        model_id,
-        template_type,
-        template_name,
-        revision,
-        active,
-        created_at,
-        updated_at
-      FROM test_template
-      WHERE model_id = $1
-        AND template_type = 'INSPECTION'
-        AND active = true
-      ORDER BY revision DESC NULLS LAST, created_at DESC, id DESC
+        t.id,
+        t.model_id,
+        t.template_type,
+        t.template_name,
+        t.revision,
+        t.active,
+        t.created_at,
+        t.updated_at
+      FROM test_template t
+      JOIN test_template_model ttm ON ttm.template_id = t.id
+      WHERE ttm.model_id = $1
+        AND t.template_type = 'INSPECTION'
+        AND t.active = true
+      ORDER BY t.revision DESC NULLS LAST, t.created_at DESC, t.id DESC
     `,
     [modelId]
   );
@@ -199,6 +248,21 @@ async function findTemplateById(templateId) {
   );
 
   return result.rows[0] || null;
+}
+
+async function isTemplateAssignedToModel(templateId, modelId) {
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM test_template_model
+      WHERE template_id = $1
+        AND model_id = $2
+      LIMIT 1
+    `,
+    [templateId, modelId]
+  );
+
+  return Boolean(result.rows[0]);
 }
 
 async function findInspectionTemplateItems(templateId) {
@@ -251,6 +315,36 @@ async function findProductUnitContext(productUnitId) {
       WHERE pu.id = $1
     `,
     [productUnitId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function findProductUnitContextByLotAndSerial(lotNumber, serialNumber) {
+  const result = await pool.query(
+    `
+      WITH lot_units AS (
+        SELECT
+          pu.id,
+          pu.model_id,
+          pu.lot_id,
+          pu.serial_number,
+          pu.product_status AS unit_status,
+          pl.lot_number,
+          pl.status AS lot_status,
+          pm.model_code,
+          pm.product_name,
+          ROW_NUMBER() OVER (PARTITION BY pu.lot_id ORDER BY pu.serial_number ASC)::int AS inspection_no
+        FROM product_unit pu
+        JOIN production_lot pl ON pl.id = pu.lot_id
+        JOIN product_model pm ON pm.id = pu.model_id
+        WHERE pl.lot_number = $1
+      )
+      SELECT *
+      FROM lot_units
+      WHERE serial_number = $2
+    `,
+    [lotNumber, serialNumber]
   );
 
   return result.rows[0] || null;
@@ -451,8 +545,8 @@ async function deleteInspectionEquipment(inspectionId, client) {
   );
 }
 
-async function findInspectionById(id) {
-  const result = await pool.query(
+async function findInspectionById(id, client) {
+  const result = await executor(client).query(
     `
       SELECT
         ih.*,
@@ -507,8 +601,8 @@ async function findInspectionDetails(id) {
   return result.rows;
 }
 
-async function findInspectionEquipment(id) {
-  const result = await pool.query(
+async function findInspectionEquipment(id, client) {
+  const result = await executor(client).query(
     `
       SELECT
         ie.id,
@@ -529,6 +623,41 @@ async function findInspectionEquipment(id) {
       ORDER BY e.equipment_code ASC
     `,
     [id]
+  );
+
+  return result.rows;
+}
+
+async function findInspectionsForBulkWorkflow({ inspectionIds, lotId, status }, client) {
+  const values = [];
+  const where = [];
+
+  if (inspectionIds) {
+    values.push(inspectionIds);
+    where.push(`ih.id = ANY($${values.length}::int[])`);
+  }
+
+  if (lotId) {
+    values.push(lotId);
+    where.push(`pu.lot_id = $${values.length}`);
+    values.push(status);
+    where.push(`ih.status = $${values.length}`);
+  }
+
+  const result = await executor(client).query(
+    `
+      SELECT
+        ih.*,
+        pu.serial_number,
+        pu.lot_id,
+        pu.model_id
+      FROM inspection_header ih
+      JOIN product_unit pu ON pu.id = ih.product_unit_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY ih.id ASC
+      FOR UPDATE OF ih
+    `,
+    values
   );
 
   return result.rows;
@@ -858,8 +987,10 @@ module.exports = {
   findLotInspectionStatus,
   findInspectionTemplatesByModelId,
   findTemplateById,
+  isTemplateAssignedToModel,
   findInspectionTemplateItems,
   findProductUnitContext,
+  findProductUnitContextByLotAndSerial,
   findTemplateItemsByIds,
   findInspectionByUnitTemplateNo,
   createInspectionHeader,
@@ -871,6 +1002,7 @@ module.exports = {
   findInspectionById,
   findInspectionDetails,
   findInspectionEquipment,
+  findInspectionsForBulkWorkflow,
   findApprovalLogs,
   findEquipmentByIds,
   findModelRequiredEquipment,

@@ -61,12 +61,16 @@ export function QcLotSearchPage() {
         <label>Search<input value={form.search} placeholder="Lot No / Model / Product" onChange={(event) => setForm({ ...form, search: event.target.value })} /></label>
         <label>Lot<input value={form.lot_number} placeholder="Lot number" onChange={(event) => setForm({ ...form, lot_number: event.target.value })} /></label>
         <label>Model<input value={form.model_code} placeholder="Model code" onChange={(event) => setForm({ ...form, model_code: event.target.value })} /></label>
-        <label>Status<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
+        <label>QC Status<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
           <option value="">All</option>
-          <option value="OPEN">OPEN</option>
-          <option value="HOLD">HOLD</option>
-          <option value="CLOSED">CLOSED</option>
-          <option value="CANCELLED">CANCELLED</option>
+          <option value="NOT_STARTED">NOT_STARTED</option>
+          <option value="IN_PROGRESS">IN_PROGRESS</option>
+          <option value="DRAFT">DRAFT</option>
+          <option value="SUBMITTED">SUBMITTED</option>
+          <option value="REVIEWED">REVIEWED</option>
+          <option value="APPROVED">APPROVED</option>
+          <option value="REJECTED">REJECTED</option>
+          <option value="EDIT_REQUESTED">EDIT_REQUESTED</option>
         </select></label>
         <label>From<input type="date" value={form.date_from} onChange={(event) => setForm({ ...form, date_from: event.target.value })} /></label>
         <label>To<input type="date" value={form.date_to} onChange={(event) => setForm({ ...form, date_to: event.target.value })} /></label>
@@ -88,8 +92,9 @@ export function QcLotSearchPage() {
                   <th>Product</th>
                   <th>Lot Qty</th>
                   <th>Serial Count</th>
-                  <th>Status</th>
+                  <th>QC Status</th>
                   <th>QC Progress</th>
+                  <th>Result</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -101,8 +106,9 @@ export function QcLotSearchPage() {
                     <td>{lot.product_name}</td>
                     <td>{lot.lot_qty}</td>
                     <td>{lot.serial_count}</td>
-                    <td><StatusBadge value={lot.status} /></td>
-                    <td className="mutedText">Open lot to view serial status</td>
+                    <td><StatusBadge value={lot.qc_status} /></td>
+                    <td>{lot.approved_count} / {lot.serial_count} approved</td>
+                    <td><StatusBadge value={lot.qc_result} /></td>
                     <td><button className="textButton" onClick={() => openLot(lot.id, lot.lot_number)}>Open Lot</button></td>
                   </tr>
                 ))}

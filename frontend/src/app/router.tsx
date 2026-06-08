@@ -6,6 +6,7 @@ import { NoPermission } from '../components/common/NoPermission';
 import { MainLayout } from '../layouts/MainLayout';
 import { LoginPage } from '../pages/LoginPage';
 import { DashboardPage } from '../pages/dashboard/DashboardPage';
+import { PlanningDashboardPage } from '../pages/dashboard/PlanningDashboardPage';
 import { EquipmentMasterPage } from '../pages/master-data/EquipmentMasterPage';
 import { EquipmentTypesPage } from '../pages/master-data/EquipmentTypesPage';
 import { ModelRequiredEquipmentPage } from '../pages/master-data/ModelRequiredEquipmentPage';
@@ -34,7 +35,7 @@ import { UsersPage } from '../pages/admin/UsersPage';
 import { ChangePasswordPage } from '../pages/profile/ChangePasswordPage';
 import { ProfilePage } from '../pages/profile/ProfilePage';
 
-function ProtectedRoute({ permission }: { permission?: string }) {
+function ProtectedRoute({ permission, permissions }: { permission?: string; permissions?: string[] }) {
   const { loading, isAuthenticated, user } = useAuth();
 
   if (loading) {
@@ -49,6 +50,10 @@ function ProtectedRoute({ permission }: { permission?: string }) {
     return <NoPermission />;
   }
 
+  if (permissions?.length && !permissions.some((item) => can(item, user?.permissions || []))) {
+    return <NoPermission />;
+  }
+
   return <MainLayout />;
 }
 
@@ -60,6 +65,13 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
+    ],
+  },
+  {
+    path: '/dashboard/planning',
+    element: <ProtectedRoute permissions={['PlanningView', 'SearchReport']} />,
+    children: [
+      { index: true, element: <PlanningDashboardPage /> },
     ],
   },
   {

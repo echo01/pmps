@@ -20,6 +20,7 @@ const { qcInspectionsRoutes } = require('./modules/qc-inspections/qc-inspections
 const { qaSamplingRoutes } = require('./modules/qa-sampling/qa-sampling.routes');
 const { reportsRoutes } = require('./modules/reports/reports.routes');
 const { exportsRoutes } = require('./modules/exports/exports.routes');
+const { planningRoutes } = require('./modules/planning/planning.routes');
 const { pool } = require('./db/pool');
 
 
@@ -55,6 +56,7 @@ app.use('/api', qcInspectionsRoutes);
 app.use('/api', qaSamplingRoutes);
 app.use('/api', reportsRoutes);
 app.use('/api', exportsRoutes);
+app.use('/api', planningRoutes);
 
 
 if (process.env.NODE_ENV === 'development') {

@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, Plus, RefreshCw, Wand2 } from 'lucide-react';
+import { Eye, Pencil, Plus, RefreshCw, Trash2, Wand2 } from 'lucide-react';
 import { FormEvent, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { productsApi } from '../../api/products.api';
 import { CreateProductionLotPayload, productionLotsApi, ProductionLot } from '../../api/productionLots.api';
 import { StatusBadge } from '../../components/badges/StatusBadge';
+import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorAlert } from '../../components/common/ErrorAlert';
 import { LoadingPanel } from '../../components/common/LoadingPanel';
@@ -56,6 +57,7 @@ export function ProductionLotsPage() {
   const [form, setForm] = useState(defaultForm);
   const [preview, setPreview] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deletingLot, setDeletingLot] = useState<ProductionLot | null>(null);
 
   const apiFilters = useMemo(() => ({
     search: normalize(filters.search),
@@ -117,6 +119,18 @@ export function ProductionLotsPage() {
       setActiveTab('all');
       queryClient.invalidateQueries({ queryKey: ['production-lots'] });
       queryClient.invalidateQueries({ queryKey: ['current-lots'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (lot: ProductionLot) => productionLotsApi.deleteProductionLot(lot.id),
+    onSuccess: (_, lot) => {
+      logger.info('[PRODUCTION_LOTS][DELETE][API_SUCCESS]', { lotId: lot.id });
+      setDeletingLot(null);
+      queryClient.invalidateQueries({ queryKey: ['production-lots'] });
+      queryClient.invalidateQueries({ queryKey: ['current-lots'] });
+      queryClient.invalidateQueries({ queryKey: ['planning'] });
+      queryClient.invalidateQueries({ queryKey: ['reports'] });
     },
   });
 
@@ -200,7 +214,7 @@ export function ProductionLotsPage() {
           <label>Model<input value={filters.model_code} placeholder="All" onChange={(event) => setFilter('model_code', event.target.value)} /></label>
           <label>Lot<input value={filters.lot_number} placeholder="All" onChange={(event) => setFilter('lot_number', event.target.value)} /></label>
           <label>Status<select value={filters.status} onChange={(event) => setFilter('status', event.target.value)}>
-            <option value="">All</option><option value="OPEN">OPEN</option><option value="HOLD">HOLD</option><option value="CLOSED">CLOSED</option><option value="CANCELLED">CANCELLED</option>
+            <option value="">All</option><option value="OPEN">OPEN</option><option value="COMPLETED">COMPLETED</option><option value="HOLD">HOLD</option><option value="CLOSED">CLOSED</option><option value="CANCELLED">CANCELLED</option>
           </select></label>
           <label>From<input type="date" value={filters.date_from} onChange={(event) => setFilter('date_from', event.target.value)} /></label>
           <label>To<input type="date" value={filters.date_to} onChange={(event) => setFilter('date_to', event.target.value)} /></label>
@@ -208,7 +222,9 @@ export function ProductionLotsPage() {
         </form>
       ) : null}
 
-      {activeTab === 'current' ? <LotTable rows={currentLots.data || []} loading={currentLots.isLoading} error={currentLots.error} /> : null}
+      {deleteMutation.error ? <ErrorAlert error={deleteMutation.error} title="Unable to delete production lot" /> : null}
+
+      {activeTab === 'current' ? <LotTable rows={currentLots.data || []} loading={currentLots.isLoading} error={currentLots.error} onDelete={setDeletingLot} /> : null}
       {activeTab === 'all' ? (
         <section className="panel">
           {lotList.isLoading ? <LoadingPanel /> : null}
@@ -216,7 +232,7 @@ export function ProductionLotsPage() {
           {lotList.data && lotList.data.rows.length === 0 ? <EmptyState /> : null}
           {lotList.data && lotList.data.rows.length > 0 ? (
             <>
-              <LotTableInner rows={lotList.data.rows} />
+              <LotTableInner rows={lotList.data.rows} onDelete={setDeletingLot} />
               <Pagination
                 page={lotList.data.pagination.page}
                 pageSize={lotList.data.pagination.page_size}
@@ -268,22 +284,45 @@ export function ProductionLotsPage() {
           </div>
         </section>
       ) : null}
+
+      <ConfirmDialog
+        open={Boolean(deletingLot)}
+        title="Delete Production Lot"
+        message={deletingLot
+          ? `Delete "${deletingLot.lot_number}" and all related serial, QC, QA, report, audit, ECN, and planning data? This cannot be undone.`
+          : ''}
+        confirming={deleteMutation.isPending}
+        onCancel={() => setDeletingLot(null)}
+        onConfirm={() => {
+          if (deletingLot) deleteMutation.mutate(deletingLot);
+        }}
+      />
     </div>
   );
 }
 
-function LotTable({ rows, loading, error }: { rows: ProductionLot[]; loading: boolean; error: unknown }) {
+function LotTable({
+  rows,
+  loading,
+  error,
+  onDelete,
+}: {
+  rows: ProductionLot[];
+  loading: boolean;
+  error: unknown;
+  onDelete: (lot: ProductionLot) => void;
+}) {
   return (
     <section className="panel">
       {loading ? <LoadingPanel /> : null}
       {error ? <ErrorAlert error={error} /> : null}
       {!loading && !error && rows.length === 0 ? <EmptyState /> : null}
-      {rows.length ? <LotTableInner rows={rows} /> : null}
+      {rows.length ? <LotTableInner rows={rows} onDelete={onDelete} /> : null}
     </section>
   );
 }
 
-function LotTableInner({ rows }: { rows: ProductionLot[] }) {
+function LotTableInner({ rows, onDelete }: { rows: ProductionLot[]; onDelete: (lot: ProductionLot) => void }) {
   return (
     <table>
       <thead><tr><th>Lot</th><th>Model</th><th>Qty</th><th>Serials</th><th>Status</th><th>Production Date</th><th>Action</th></tr></thead>
@@ -296,7 +335,15 @@ function LotTableInner({ rows }: { rows: ProductionLot[] }) {
             <td>{lot.serial_count}</td>
             <td><StatusBadge value={lot.status} /></td>
             <td>{formatDate(lot.production_date)}</td>
-            <td><Link className="textButton" to={`/production-lots/${lot.id}`}><Eye size={16} /> Detail</Link></td>
+            <td>
+              <div className="tableActions">
+                <Link className="textButton" to={`/production-lots/${lot.id}`}><Eye size={16} /> Detail</Link>
+                <Link className="textButton" to={`/production-lots/${lot.id}#update-lot`}><Pencil size={16} /> Edit</Link>
+                <button className="iconButton dangerButton" type="button" title={`Delete ${lot.lot_number}`} aria-label={`Delete ${lot.lot_number}`} onClick={() => onDelete(lot)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </td>
           </tr>
         ))}
       </tbody>

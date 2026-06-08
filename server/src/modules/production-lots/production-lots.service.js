@@ -219,12 +219,154 @@ async function updateProductionLot({ id, payload, requestId }) {
     throw notFound('Production lot not found');
   }
 
-  const lot = await repository.updateLot(id, payload);
+  const currentQty = Number(existing.serial_count);
+  const nextQty = payload.lot_qty ?? currentQty;
+  const qtyDifference = nextQty - currentQty;
+  const metadata = {
+    ...(Object.prototype.hasOwnProperty.call(payload, 'production_date')
+      ? { production_date: payload.production_date }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(payload, 'remark')
+      ? { remark: payload.remark }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(payload, 'status')
+      ? { status: payload.status }
+      : {}),
+  };
+
+  if (qtyDifference > 0 && !payload.serial_generation) {
+    throw validationError('Validation failed', [
+      {
+        field: 'serial_generation',
+        message: 'serial_generation is required when increasing lot quantity',
+      },
+    ]);
+  }
+
+  if (qtyDifference <= 0 && payload.serial_generation) {
+    throw validationError('Validation failed', [
+      {
+        field: 'serial_generation',
+        message: 'serial_generation is allowed only when increasing lot quantity',
+      },
+    ]);
+  }
+
+  let addedSerials = [];
+  let removedSerials = [];
+
+  if (qtyDifference > 0) {
+    if (payload.serial_generation.count !== qtyDifference) {
+      throw validationError('Validation failed', [
+        {
+          field: 'serial_generation.count',
+          message: `serial_generation.count must equal the added quantity (${qtyDifference})`,
+        },
+      ]);
+    }
+
+    addedSerials = generateSerials(payload.serial_generation);
+    assertNoDuplicatedSerials(addedSerials);
+
+    const existingSerials = await repository.findExistingSerialsByModelId(
+      existing.model_id,
+      addedSerials
+    );
+
+    if (existingSerials.length) {
+      throw conflict('Serial number already exists', [
+        {
+          field: 'serial_generation',
+          message: `Serial numbers already exist: ${existingSerials.join(', ')}`,
+        },
+      ]);
+    }
+  }
+
+  let lot;
+
+  try {
+    lot = await withTransaction(
+      async (client) => {
+        if (qtyDifference > 0) {
+          await repository.insertProductUnits(
+            {
+              lotId: id,
+              modelId: existing.model_id,
+              serialNumbers: addedSerials,
+            },
+            client
+          );
+        } else if (qtyDifference < 0) {
+          const units = await repository.findUnitsForRemoval(id, Math.abs(qtyDifference), client);
+          const unitIds = units.map((unit) => unit.id);
+
+          if (unitIds.length !== Math.abs(qtyDifference)) {
+            throw conflict('Production lot serial count changed during update');
+          }
+
+          removedSerials = units.map((unit) => unit.serial_number);
+          await repository.deleteUnitWorkflowData(unitIds, client);
+          await repository.recalculateQaSamplingForLot(id, nextQty, client);
+        }
+
+        if (qtyDifference !== 0) {
+          await repository.updateLotQty(id, nextQty, client);
+        }
+
+        await repository.updateLot(id, metadata, client);
+
+        if (qtyDifference !== 0) {
+          await repository.syncLotWorkflow(id, client);
+        }
+
+        return repository.findLotById(id, client);
+      },
+      {
+        requestId,
+        name: 'update-production-lot',
+      }
+    );
+  } catch (error) {
+    if (error.code === '23505') {
+      throw conflict('Serial number already exists');
+    }
+
+    throw error;
+  }
 
   return {
     ...lot,
     ecn_refs: await repository.findLotEcnRefs(id),
+    added_serials: addedSerials,
+    removed_serials: removedSerials,
   };
+}
+
+async function deleteProductionLot({ id, requestId }) {
+  console.info('[PRODUCTION_LOTS][DELETE][START]', { requestId, id });
+
+  const existing = await repository.findLotById(id);
+
+  if (!existing) {
+    throw notFound('Production lot not found');
+  }
+
+  const deleted = await withTransaction(
+    (client) => repository.deleteLotGraph(id, client),
+    {
+      requestId,
+      name: 'delete-production-lot',
+    }
+  );
+
+  console.info('[PRODUCTION_LOTS][DELETE][SUCCESS]', {
+    requestId,
+    id,
+    lotNumber: existing.lot_number,
+  });
+
+  return deleted;
 }
 
 async function getProductionLotSerials({ id, requestId }) {
@@ -276,6 +418,7 @@ module.exports = {
   generateSerialPreview,
   createProductionLot,
   updateProductionLot,
+  deleteProductionLot,
   getProductionLotSerials,
   replaceLotEcnRefs,
   listCurrentLots,

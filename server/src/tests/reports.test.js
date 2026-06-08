@@ -31,6 +31,7 @@ const state = {
   qaNumericItemId: null,
   qaBooleanItemId: null,
   lotId: null,
+  planId: null,
   productUnitIds: [],
   qcInspectionId: null,
   qaSamplingId: null,
@@ -380,6 +381,20 @@ describe('Sprint 7 Report / Search / Dashboard integration', () => {
     assert.equal(lot.status, 201);
     state.lotId = lot.body.data.lot.id;
 
+    const plan = await request('POST', '/api/planning/plans', {
+      token: adminToken,
+      body: {
+        lot_id: state.lotId,
+        plan_name: 'Sprint 7 Report Readiness Plan',
+        priority: 'NORMAL',
+        planned_start_date: '2026-06-03',
+        planned_end_date: '2026-06-12',
+        create_default_tasks: true,
+      },
+    });
+    assert.equal(plan.status, 201);
+    state.planId = plan.body.data.id;
+
     const units = await request('GET', `/api/qc/lots/${state.lotId}/units`, {
       token: adminToken,
     });
@@ -502,7 +517,9 @@ describe('Sprint 7 Report / Search / Dashboard integration', () => {
     assert.equal(response.body.meta.pagination.page, 1);
     assert.equal(response.body.meta.pagination.page_size, 20);
     assert.ok(response.body.data.some((row) => row.lot_id === state.lotId));
-    assert.equal(response.body.data.find((row) => row.lot_id === state.lotId).serial_count, 3);
+    const lot = response.body.data.find((row) => row.lot_id === state.lotId);
+    assert.equal(lot.serial_count, 3);
+    assert.equal(lot.qa_sampling_count, 2);
   });
 
   it('GET /api/reports/serials searches serials with latest QC and QA result', async () => {
@@ -552,7 +569,9 @@ describe('Sprint 7 Report / Search / Dashboard integration', () => {
     assert.equal(response.body.data.lot.lot_id, state.lotId);
     assert.equal(response.body.data.serials.length, 3);
     assert.ok(response.body.data.qc_summary.pass >= 1);
-    assert.ok(response.body.data.qa_summary.pass >= 1);
+    assert.equal(response.body.data.qa_summary.total, 2);
+    assert.equal(response.body.data.qa_summary.pass, 2);
+    assert.equal(response.body.data.qa_summary.approved, 2);
   });
 
   it('GET /api/reports/serials/:productUnitId returns serial detail report', async () => {
@@ -615,6 +634,57 @@ describe('Sprint 7 Report / Search / Dashboard integration', () => {
     assert.equal(response.body.data.length, 4);
     assert.ok(response.body.data.every((row) => row.lot_number === `S7-LOT-${codeSuffix}`));
     assert.ok(response.body.data.every((row) => row.serial_number));
+  });
+
+  it('completes Report Ready, plan, and production lot when QC and QA workflows are approved', async () => {
+    for (let index = 1; index < state.productUnitIds.length; index += 1) {
+      const inspection = await request('POST', '/api/qc/inspections', {
+        token: adminToken,
+        body: qcPayload({
+          product_unit_id: state.productUnitIds[index],
+          inspection_no: index + 1,
+        }),
+      });
+      assert.equal(inspection.status, 201);
+      await approveQcInspection(inspection.body.data.id);
+    }
+
+    const listResponse = await request(
+      'GET',
+      `/api/reports/lots?search=${encodeURIComponent(`S7-LOT-${codeSuffix}`)}&status=READY&page=1&page_size=20`,
+      { token: adminToken }
+    );
+
+    assert.equal(listResponse.status, 200);
+    const readyLot = listResponse.body.data.find((row) => row.lot_id === state.lotId);
+    assert.ok(readyLot);
+    assert.equal(readyLot.lot_status, 'READY');
+
+    const planningResponse = await request('GET', `/api/planning/plans/${state.planId}`, {
+      token: adminToken,
+    });
+
+    assert.equal(planningResponse.status, 200);
+    assert.equal(planningResponse.body.data.plan_status, 'COMPLETED');
+    assert.equal(planningResponse.body.data.lot_status, 'COMPLETED');
+    assert.equal(
+      planningResponse.body.data.tasks.find((task) => task.task_type === 'REPORT_READY').derived_status,
+      'COMPLETED'
+    );
+
+    const productionLotResponse = await request('GET', `/api/production-lots/${state.lotId}`, {
+      token: adminToken,
+    });
+
+    assert.equal(productionLotResponse.status, 200);
+    assert.equal(productionLotResponse.body.data.status, 'COMPLETED');
+
+    const detailResponse = await request('GET', `/api/reports/lots/${state.lotId}`, {
+      token: adminToken,
+    });
+
+    assert.equal(detailResponse.status, 200);
+    assert.equal(detailResponse.body.data.lot.lot_status, 'READY');
   });
 
   it('GET /api/dashboard/summary without token returns 401', async () => {
